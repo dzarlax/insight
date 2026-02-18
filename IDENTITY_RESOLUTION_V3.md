@@ -2676,13 +2676,29 @@ erDiagram
         timestamptz changed_at
     }
     
+
     person_golden {
         serial id PK
         uuid person_id FK
         text display_name
+        text email
+        uuid org_unit_id FK
         text status
+        numeric completeness_score
+        int conflict_count
+        timestamptz last_updated_at
+        jsonb contributing_sources
+    }
+
+    person_golden_audit {
+        serial id PK
+        uuid person_id FK
+        text attribute
+        text value
+        text source_system
         timestamptz updated_at
     }
+    person_golden ||--o{ person_golden_audit : "audit log"
     
     person_source_contribution {
         serial id PK
@@ -3995,26 +4011,46 @@ Day 30: Sarah starts using Git (same email)
 -- Golden record: current best-known truth about each person
 -- Stored in RDBMS, synchronized to ClickHouse via Local Replica (see Section 15)
 CREATE TABLE identity.person_golden (
+
     person_id           UUID PRIMARY KEY,
-    
+
     -- Core attributes (best known values)
     display_name        TEXT,
+    email               TEXT,
+    org_unit_id         UUID REFERENCES org_unit(org_unit_id),
     status              TEXT,
-    
-    -- Source tracking for each attribute
-    display_name_source TEXT,
-    display_name_updated_at TIMESTAMPTZ,
-    status_source       TEXT,
-    status_updated_at   TIMESTAMPTZ,
-    
+
     -- Computed fields
     completeness_score  NUMERIC(3,2),  -- 0.0 to 1.0, how complete is the record
     conflict_count      INTEGER DEFAULT 0,
     last_updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    
+
     -- All contributing sources
     contributing_sources JSONB DEFAULT '[]'  -- ["workday", "ldap", "git"]
 );
+
+-- Audit and traceability for all attributes
+CREATE TABLE identity.person_golden_audit (
+    id                  SERIAL PRIMARY KEY,
+    person_id           UUID NOT NULL,
+    attribute           TEXT NOT NULL,         -- e.g. 'email', 'org_unit_id'
+    value               TEXT,
+    source_system       TEXT,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+---
+#### About completeness_score
+
+The completeness_score field reflects how complete the Golden Record is for a person. It is calculated as a weighted sum of filled required and optional attributes:
+
+- Required fields: display_name, email, status
+- Optional fields: department, role, manager, location
+
+Formula:
+
+    completeness_score = (required_filled / required_total) * 0.7 + (optional_filled / optional_total) * 0.3
+
+Where required_filled is the number of required fields present, and optional_filled is the number of optional fields present. The score ranges from 0.0 (no data) to 1.0 (all fields filled).
 
 -- Source contributions: tracks what each source provided
 CREATE TABLE identity.person_source_contribution (
