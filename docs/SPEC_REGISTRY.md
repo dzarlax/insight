@@ -421,7 +421,7 @@ Key gaps across the entire specification — documents and decisions that don't 
 | Connector SDK spec | Platform | `CONNECTOR_AUTOMATION.md` describes what the SDK should do; there is no specification of what it actually does — its APIs, the `connector.yaml` schema, and the `BaseConnector` interface. |
 | Onboarding UI spec | Platform | `CONNECTOR_AUTOMATION.md` §7 describes the AI-assisted onboarding concept. No UX spec, wireframes, or functional requirements document. |
 | PR #3 resolution | Architecture | The "Streams Proposal" PR (#3, `constructor-streams` branch) defines an alternative Bronze schema for git, M365, YouTrack, Zulip, and Cursor using a `streams/` folder structure. It has been open since February 2026 and conflicts with the current `connectors/` approach. Needs a decision: merge, close, or extract useful parts. |
-| PR #14 resolution | Identity | Identity Resolution V4 is an architectural overhaul from an external contributor. Needs review to determine if it supersedes v3 or introduces breaking changes before any Identity Resolution work begins. |
+| PR #14 resolution | Identity | Identity Resolution V4 introduces valuable improvements (entity anchors, GDPR purge, multi-tenancy, MariaDB parity). Naming conventions need alignment with connector specs (`{source}_{entity}` / `class_*`) before merge. `STORAGE_TECHNOLOGY_EVALUATION.md` and `CONNECTORS_ARCHITECTURE.md` also need updating to reflect MariaDB as a supported engine for the identity layer. |
 
 ---
 
