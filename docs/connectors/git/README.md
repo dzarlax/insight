@@ -62,7 +62,7 @@ Data-source agnostic specification for Version Control connectors. Defines unifi
 - Global deduplication by `commit_hash`
 - Simplified Silver layer transformation (git_* tables are already unified; Silver adds identity resolution and workspace isolation)
 
-**Source-specific fields**: Platform-specific features (e.g., GitHub's formal review states, Bitbucket's task count) are stored in the `metadata` JSON column and can be extracted in Gold layer if needed.
+**Source-specific fields**: Platform-specific features (e.g., GitHub's formal review states, Bitbucket's task count) are stored in the `metadata` JSON column and can be extracted in Silver layer if needed.
 
 ---
 
