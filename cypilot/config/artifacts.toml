@@ -218,6 +218,11 @@ path = "docs/components/connectors/allure.md"
 name = "Allure TestOps Connector Specification"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/connector/specs/PRD.md"
+name = "Connector Framework"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/domain/connector/specs/DESIGN.md"
 name = "Connector Framework Design"
