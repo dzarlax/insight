@@ -43,7 +43,7 @@
 
 ### 1.1 Purpose
 
-The Connector Framework is the data ingestion subsystem of Constructor Insight. It enables the platform to collect raw data from external source systems — version control, task tracking, HR directories, communication tools, AI development tools, CRM, and quality/testing — and deliver it through the Medallion Architecture (Bronze → Silver → Gold) for analytics consumption.
+The Connector Framework is the data ingestion subsystem of Insight. It enables the platform to collect raw data from external source systems — version control, task tracking, HR directories, communication tools, AI development tools, CRM, and quality/testing — and deliver it through the Medallion Architecture (Bronze → Silver → Gold) for analytics consumption.
 
 The framework separates two fundamentally different concerns: structural integration mechanics (authentication, pagination, rate limiting, error recovery) that are identical across all sources, and semantic mapping (cross-source unification, enum normalization, identity resolution rules) that requires human authorship per domain.
 
