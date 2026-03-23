@@ -626,7 +626,7 @@ sequenceDiagram
     Pipeline ->> DB: SELECT * FROM git_commit_files WHERE data_source='insight_github'
     DB -->> Pipeline: commit file records
     loop For each file analyzed
-        Pipeline ->> DB: UPSERT git_commits_files_ext (project_key, repo_slug, commit_hash, file_path, property_key, property_value, ...)
+        Pipeline ->> DB: UPSERT git_commits_files_ext (tenant_id, source_instance_id, project_key, repo_slug, commit_hash, file_path, field_id, field_name, field_value_str/int/float, ...)
     end
     Note over Pipeline,DB: Core git_commit_files rows unchanged
 ```
@@ -722,14 +722,18 @@ INSERT INTO github_graphql_cache (
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
+| `tenant_id` | UUID | REQUIRED | Tenant identifier — injected by framework |
+| `source_instance_id` | String | REQUIRED | Source instance identifier (e.g. `github-acme-prod`) |
 | `id` | Int64 | PRIMARY KEY | Auto-generated unique identifier |
 | `project_key` | String | REQUIRED | Repository owner (org login) — joins to `git_commit_files.project_key` |
 | `repo_slug` | String | REQUIRED | Repository name — joins to `git_commit_files.repo_slug` |
 | `commit_hash` | String | REQUIRED | Commit SHA — joins to `git_commit_files.commit_hash` |
 | `file_path` | String | REQUIRED | File path — joins to `git_commit_files.file_path` |
-| `property_key` | String | REQUIRED | Property name (e.g., `ai_thirdparty_flag`, `scancode_thirdparty_flag`, `scancode_metadata`) |
-| `property_value` | String | REQUIRED | Property value (stored as string; JSON for complex values) |
-| `property_type` | String | REQUIRED | Value type hint: `string`, `number`, `boolean`, `json` |
+| `field_id` | String | REQUIRED | Machine identifier for the property (e.g. `ai_thirdparty_flag`, `scancode_metadata`) |
+| `field_name` | String | REQUIRED | Human-readable label for the property (e.g. `"AI Third-party Flag"`) |
+| `field_value_str` | String | NULLABLE | String / JSON value; NULL when the property is purely numeric |
+| `field_value_int` | Int64 | NULLABLE | Integer or boolean (0/1) value; NULL when the property is not an integer |
+| `field_value_float` | Float64 | NULLABLE | Fractional numeric value; NULL when the property is not a float |
 | `collected_at` | DateTime64(3) | REQUIRED | When this property was collected/computed |
 | `data_source` | String | DEFAULT '' | Source discriminator — `'insight_github'` for GitHub-originated files |
 | `_version` | UInt64 | REQUIRED | Deduplication version (Unix ms) |
@@ -737,15 +741,15 @@ INSERT INTO github_graphql_cache (
 **PK**: `id`
 
 **Indexes**:
-- `idx_commit_file_ext_lookup`: `(project_key, repo_slug, commit_hash, file_path, property_key, data_source)`
-- `idx_file_property_key`: `(property_key)`
+- `idx_commit_file_ext_lookup`: `(tenant_id, source_instance_id, project_key, repo_slug, commit_hash, file_path, field_id, data_source)`
+- `idx_file_ext_field_id`: `(field_id)`
 
 **Populated by**: AI detection pipeline and ScanCode pipeline (separate from the GitHub connector). The GitHub connector itself does NOT write to this table; it provides the anchor rows in `git_commit_files` that enrichment pipelines join against.
 
 **Common property keys**:
-- `ai_thirdparty_flag` — AI-detected third-party code (0 or 1) — type: `boolean`
-- `scancode_thirdparty_flag` — License scanner detected third-party (0 or 1) — type: `boolean`
-- `scancode_metadata` — License and copyright scanning results for this file — type: `json`
+- `ai_thirdparty_flag` — AI-detected third-party code (0 or 1) — value: `field_value_int`
+- `scancode_thirdparty_flag` — License scanner detected third-party (0 or 1) — value: `field_value_int`
+- `scancode_metadata` — License and copyright scanning results for this file — value: `field_value_str` (JSON)
 
 **Enrichment query example**:
 
@@ -759,16 +763,19 @@ SELECT
     f.file_extension,
     f.lines_added,
     f.lines_removed,
-    MAX(CASE WHEN e.property_key = 'ai_thirdparty_flag' THEN e.property_value END) AS ai_thirdparty_flag,
-    MAX(CASE WHEN e.property_key = 'scancode_thirdparty_flag' THEN e.property_value END) AS scancode_thirdparty_flag
+    MAX(CASE WHEN e.field_id = 'ai_thirdparty_flag'     THEN e.field_value_int END)  AS ai_thirdparty_flag,
+    MAX(CASE WHEN e.field_id = 'scancode_thirdparty_flag' THEN e.field_value_int END) AS scancode_thirdparty_flag,
+    MAX(CASE WHEN e.field_id = 'scancode_metadata'       THEN e.field_value_str END)  AS scancode_metadata
 FROM git_commit_files f
 LEFT JOIN git_commits_files_ext e
-    ON f.project_key = e.project_key
+    ON f.tenant_id = e.tenant_id
+    AND f.project_key = e.project_key
     AND f.repo_slug = e.repo_slug
     AND f.commit_hash = e.commit_hash
     AND f.file_path = e.file_path
     AND f.data_source = e.data_source
-WHERE f.data_source = 'insight_github'
+WHERE f.tenant_id = '...'
+  AND f.data_source = 'insight_github'
 GROUP BY f.project_key, f.repo_slug, f.commit_hash, f.file_path,
          f.file_extension, f.lines_added, f.lines_removed;
 ```
@@ -831,6 +838,8 @@ User-Agent: insight-github-connector/1.0
 
 ```python
 {
+    'tenant_id': config.tenant_id,
+    'source_instance_id': config.source_instance_id,
     'project_key': api_data['owner']['login'],           # org login (e.g., "myorg")
     'repo_slug': api_data['name'],                       # repo name (e.g., "my-repo")
     'repo_uuid': str(api_data.get('id')),
@@ -855,6 +864,8 @@ User-Agent: insight-github-connector/1.0
 
 ```python
 {
+    'tenant_id': config.tenant_id,
+    'source_instance_id': config.source_instance_id,
     'project_key': owner,
     'repo_slug': repo,
     'commit_hash': commit_node['oid'],
@@ -885,6 +896,8 @@ User-Agent: insight-github-connector/1.0
 ```python
 for file_data in rest_commit['files']:
     {
+        'tenant_id': config.tenant_id,
+        'source_instance_id': config.source_instance_id,
         'project_key': owner,
         'repo_slug': repo,
         'commit_hash': commit_hash,
@@ -905,6 +918,8 @@ for file_data in rest_commit['files']:
 
 ```python
 {
+    'tenant_id': config.tenant_id,
+    'source_instance_id': config.source_instance_id,
     'project_key': owner,
     'repo_slug': repo,
     'pr_id': pr_node['databaseId'],
@@ -941,6 +956,8 @@ for file_data in rest_commit['files']:
 ```python
 for review in pr_node['reviews']['nodes']:
     {
+        'tenant_id': config.tenant_id,
+        'source_instance_id': config.source_instance_id,
         'project_key': owner,
         'repo_slug': repo,
         'pr_id': pr_node['databaseId'],
@@ -973,6 +990,8 @@ For each PR, the connector calls `GET /repos/{owner}/{repo}/pulls/{number}/commi
 ```python
 for commit in rest_pr_commits:
     {
+        'tenant_id': config.tenant_id,
+        'source_instance_id': config.source_instance_id,
         'project_key': owner,
         'repo_slug': repo,
         'pr_id': pr_id,
@@ -982,7 +1001,7 @@ for commit in rest_pr_commits:
     }
 ```
 
-This REST call uses the existing `RestApiClient.paginate_link()` loop. The junction rows are upserted keyed on `(project_key, repo_slug, pr_id, commit_hash, data_source)`.
+This REST call uses the existing `RestApiClient.paginate_link()` loop. The junction rows are upserted keyed on `(tenant_id, source_instance_id, project_key, repo_slug, pr_id, commit_hash, data_source)`.
 
 ---
 
@@ -992,20 +1011,26 @@ After each `git_repositories` upsert, `FieldMapper.map_repo_ext()` produces one 
 
 ```python
 ext_properties = [
-    {'property_key': 'stars_count',       'property_value': str(api_data['stargazers_count']), 'property_type': 'number'},
-    {'property_key': 'forks_count',       'property_value': str(api_data['forks_count']),      'property_type': 'number'},
-    {'property_key': 'watchers_count',    'property_value': str(api_data['watchers_count']),   'property_type': 'number'},
-    {'property_key': 'open_issues_count', 'property_value': str(api_data['open_issues_count']),'property_type': 'number'},
-    {'property_key': 'is_fork',           'property_value': str(int(api_data['fork'])),        'property_type': 'boolean'},
-    {'property_key': 'is_archived',       'property_value': str(int(api_data['archived'])),    'property_type': 'boolean'},
-    {'property_key': 'default_branch',    'property_value': api_data['default_branch'],        'property_type': 'string'},
+    {'field_id': 'stars_count',       'field_name': 'Stars Count',       'field_value_int': api_data['stargazers_count']},
+    {'field_id': 'forks_count',       'field_name': 'Forks Count',       'field_value_int': api_data['forks_count']},
+    {'field_id': 'watchers_count',    'field_name': 'Watchers Count',    'field_value_int': api_data['watchers_count']},
+    {'field_id': 'open_issues_count', 'field_name': 'Open Issues Count', 'field_value_int': api_data['open_issues_count']},
+    {'field_id': 'is_fork',           'field_name': 'Is Fork',           'field_value_int': int(api_data['fork'])},
+    {'field_id': 'is_archived',       'field_name': 'Is Archived',       'field_value_int': int(api_data['archived'])},
+    {'field_id': 'default_branch',    'field_name': 'Default Branch',    'field_value_str': api_data['default_branch']},
 ]
 for prop in ext_properties:
-    prop.update({'project_key': owner, 'repo_slug': repo,
-                 'data_source': 'insight_github', '_version': int(time.time() * 1000)})
+    prop.update({
+        'tenant_id': config.tenant_id,
+        'source_instance_id': config.source_instance_id,
+        'project_key': owner,
+        'repo_slug': repo,
+        'data_source': 'insight_github',
+        '_version': int(time.time() * 1000),
+    })
 ```
 
-Each row is upserted to `git_repositories_ext` keyed on `(project_key, repo_slug, property_key, data_source)`.
+Each row is upserted to `git_repositories_ext` keyed on `(tenant_id, source_instance_id, project_key, repo_slug, field_id, data_source)`.
 
 ---
 
@@ -1016,6 +1041,8 @@ Each row is upserted to `git_repositories_ext` keyed on `(project_key, repo_slug
 ```python
 for ticket_key in extract_ticket_references(pr_node['title'], pr_node.get('body', ''), []):
     {
+        'tenant_id': config.tenant_id,
+        'source_instance_id': config.source_instance_id,
         'project_key': owner,
         'repo_slug': repo,
         'pr_id': pr_id,
@@ -1025,7 +1052,7 @@ for ticket_key in extract_ticket_references(pr_node['title'], pr_node.get('body'
     }
 ```
 
-Rows are upserted keyed on `(project_key, repo_slug, pr_id, ticket_key, data_source)`.
+Rows are upserted keyed on `(tenant_id, source_instance_id, project_key, repo_slug, pr_id, ticket_key, data_source)`.
 
 ---
 
