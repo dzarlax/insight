@@ -272,7 +272,7 @@ The connector **SHOULD** support best-effort historical backfill during onboardi
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-zoom-collection-runs`
 
-The connector **MUST** record collection run outcomes, including run timing, status, scope, and counts for discovered meetings, enriched meetings, participant records, user records, message activity, and errors.
+The connector **MUST** expose enough operational metadata to detect failed or incomplete collection runs, whether through connector-emitted records or the surrounding ingestion platform runtime.
 
 **Rationale**: Operators need enough visibility to detect failed or incomplete runs before data quality issues spread downstream.
 
@@ -368,7 +368,7 @@ None.
 
 **Compatibility**: The connector depends on continued availability of the required Zoom activity surfaces; source-side entitlement or contract changes may reduce completeness until the connector is updated
 
-**Implementation note**: The current declarative connector manifest uses concise stream names `users`, `meetings`, `participants`, and `message_activities`. Message activity is implemented through a separate user-scoped message stream. These implementation stream names do not change the Zoom Bronze table model defined in this PRD.
+**Implementation note**: The current declarative connector manifest uses concise stream names `users`, `meetings`, `participants`, and `message_activities`. Message activity is implemented through `GET /chat/users/{zoom_user_id}/messages` as a separate user-scoped message stream. The current manifest requires `insight_tenant_id`, `account_id`, `client_id`, `client_secret`, `start_date`, and optional `page_size`, and it stamps `tenant_id` into every emitted row.
 
 ## 8. Use Cases
 
@@ -386,10 +386,10 @@ None.
 **Main Flow**:
 1. The connector discovers newly visible Zoom meetings in the collection window
 2. The connector records stable meeting identities and core meeting metadata
-3. The connector triggers collection of meeting details for each newly discovered meeting
+3. The connector persists meeting records with stable canonical meeting identity
 4. The connector collects participant records for each newly discovered meeting
 5. The connector does not require message activity to be attached to the meeting unless the source exposes reliable meeting-level linkage
-6. The connector records run results and exposes enriched activity for downstream processing
+6. The connector exposes enough operational evidence to detect success or failure and makes collected activity available for downstream processing
 
 **Postconditions**:
 - Each newly discovered meeting has corresponding detail and participant evidence
@@ -440,7 +440,7 @@ None.
 | Zoom account and application access | Required Server-to-Server OAuth account configuration, credentials, and permissions for meeting, participant, user, and message activity collection | p1 |
 | Zoom activity endpoint availability | Source support for exposing discoverable meetings, participant attendance detail, and message activity | p1 |
 | Identity Manager | Resolves Zoom user attributes to canonical `person_id` for cross-source analytics | p1 |
-| Bronze ingestion infrastructure | Persists connector outputs and run logs for downstream processing | p1 |
+| Bronze ingestion infrastructure | Persists connector outputs and provides operational visibility for downstream processing | p1 |
 | Scheduler and monitoring | Executes recurring runs and surfaces collection failures or completeness regressions | p2 |
 
 ## 11. Assumptions
@@ -449,6 +449,7 @@ None.
 - Webinar collection will be addressed in a later release and does not need to be represented as a meeting in this PRD
 - Message activity refers to all supported Zoom messages in scope, but not to message body content
 - Zoom message activity for the current connector implementation is collected only through a separate user-scoped message flow
+- The current manifest stamps `tenant_id` into every emitted row from `insight_tenant_id`
 - Message activity may not always have a reliable direct linkage to a specific meeting and should not be forced into meeting-scoped enrichment when such linkage is absent
 - Source account configuration provides enough participant detail to calculate attendance duration for most eligible meetings
 - Historical backfill depth varies by tenant and should be treated as best-effort rather than guaranteed
@@ -460,5 +461,5 @@ None.
 |------|--------|------------|
 | Zoom source limitations reduce participant visibility for some meetings | Attendance duration may be incomplete, weakening trust in collaboration metrics | Track completeness explicitly, record source-side limitations, and surface coverage gaps to operators |
 | API fan-out for meeting enrichment is higher than expected | Large tenants may experience slower collection cycles or operational pressure during peak windows | Prioritize incremental collection, monitor enrichment completeness, and design scheduling around expected discovery volume |
-| Message activity coverage differs across Zoom plans or account configurations | Per-user message counts may be incomplete or inconsistent across tenants, and meeting-level linkage may not always be available | Treat message coverage as a source dependency for the separate message flow and expose linkage limitations in run reporting |
+| Message activity coverage differs across Zoom plans or account configurations | Per-user message counts may be incomplete or inconsistent across tenants, and meeting-level linkage may not always be available | Treat message coverage as a source dependency for the separate message flow and expose linkage limitations through connector or platform observability |
 | Historical activity is not fully recoverable during onboarding | Early dashboards may start with partial history and create baseline gaps | Set onboarding expectations that backfill is best-effort and prioritize stable ongoing collection from day one |

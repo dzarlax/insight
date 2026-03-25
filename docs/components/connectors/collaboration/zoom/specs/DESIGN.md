@@ -1,6 +1,5 @@
 # Technical Design — Zoom Connector
 
-
 <!-- toc -->
 
 - [1. Architecture Overview](#1-architecture-overview)
@@ -35,763 +34,426 @@
 <!-- /toc -->
 
 - [ ] `p3` - **ID**: `cpt-insightspec-design-zoom-connector`
+
 ## 1. Architecture Overview
 
 ### 1.1 Architectural Vision
 
-The Zoom connector uses a meeting-first Bronze design that preserves source-native meeting and participant evidence as the authoritative synchronous collaboration record, while handling message activity through a separate user-scoped chat flow. This design follows the current [PRD.md](./PRD.md) as the source of truth: meeting discovery and meeting enrichment are mandatory and meeting-scoped, participant attendance duration is a hard `p1` requirement, and message activity is mandatory but must not be forced into meeting enrichment unless Zoom exposes reliable meeting-level linkage.
+The current Zoom connector implementation is a declarative Airbyte source manifest with four source streams: `users`, `meetings`, `participants`, and `message_activities`. The implemented design is intentionally simple and manifest-driven so that the connector can be regenerated reproducibly from specification artifacts without relying on hidden orchestration logic.
 
-The architecture separates discovery from enrichment so that newly visible meetings can be identified cheaply, queued for follow-up, and then enriched with detail and participant records through idempotent per-meeting work. Message activity follows a parallel but distinct path implemented through a separate user-scoped chat collection flow. The connector preserves the strongest supported linkage between entities and leaves unsupported relationships null rather than inventing source semantics.
+The current implementation preserves the approved product scope:
+- `users` for identity and attribution support
+- `meetings` for meeting discovery
+- `participants` for per-meeting attendance evidence
+- `message_activities` for user-scoped message activity
 
-Historical recovery is treated as best-effort onboarding or replay behavior, while ongoing incremental collection is mandatory. The design therefore centers on durable cursors, overlap-window replay, per-entity idempotence, and run logging that makes incomplete enrichment and source-capability limitations visible to operators.
+The implementation does not currently model a separate capability resolver, enrichment queue, run-log table, or optional message-to-meeting linkage. It uses straightforward declarative HTTP collection with transformations, pagination, and one stateful incremental cursor on `meetings`.
 
 ### 1.2 Architecture Drivers
 
-Requirements that significantly influence architecture decisions.
-
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet in [`ADR/`](./ADR/).
-
 #### Functional Drivers
 
-| Requirement | Design Response |
-|-------------|------------------|
-| `cpt-insightspec-fr-zoom-meeting-discovery` | Use a dedicated meeting discovery component that scans the configured incremental window, normalizes source identifiers into a canonical meeting instance identity, persists newly visible meetings, and records a discovery cursor separate from enrichment progress. |
-| `cpt-insightspec-fr-zoom-meeting-enrichment` | Use a queued enrichment flow keyed by canonical meeting instance identity so every newly discovered meeting is followed by detail and participant collection. |
-| `cpt-insightspec-fr-zoom-meeting-participants` | Store participant records per meeting with join and leave evidence, and derive participant duration from source-provided attendance timestamps when available. |
-| `cpt-insightspec-fr-zoom-meeting-traceability` | Model meetings and participants as first-class Bronze entities; expose optional message linkage only when the source provides trustworthy association. |
-| `cpt-insightspec-fr-zoom-message-activity` | Persist message activity as a dedicated Bronze entity independent from meeting enrichment. |
-| `cpt-insightspec-fr-zoom-message-collection-strategy` | Implement message activity through a separate user-scoped chat flow that stays independent from meeting enrichment. |
-| `cpt-insightspec-fr-zoom-message-linkage-scope` | Keep meeting-scoped enrichment separate from message collection; allow nullable meeting linkage in message records only when source semantics support it. |
-| `cpt-insightspec-fr-zoom-message-content-exclusion` | Exclude message bodies from Bronze tables and retain only metadata needed for counting, attribution, timing, and optional linkage. |
-| `cpt-insightspec-fr-zoom-incremental-collection` | Use persisted cursors and overlap windows for discovery, enrichment, and the separate message collection flow independently. |
-| `cpt-insightspec-fr-zoom-historical-backfill` | Support bounded historical replay jobs that reuse the same collectors and idempotence keys as steady-state runs. |
-| `cpt-insightspec-fr-zoom-collection-runs` | Emit a collection run record plus component-level counters and limitation metadata for every run. |
-| `cpt-insightspec-fr-zoom-idempotence` | Define stable uniqueness keys for meetings, participants, users, messages, and run rows so replay is safe. |
-| `cpt-insightspec-fr-zoom-user-identity-support` | Maintain a lightweight user directory table keyed by Zoom user ID and normalized email for attribution and downstream identity resolution. |
+| Requirement | Current design response |
+|-------------|-------------------------|
+| `cpt-insightspec-fr-zoom-meeting-discovery` | Implement `meetings` stream over `GET /metrics/meetings` with stateful incremental collection. |
+| `cpt-insightspec-fr-zoom-meeting-participants` | Implement `participants` as a child stream of `meetings`, keyed by `meeting_uuid`. |
+| `cpt-insightspec-fr-zoom-message-activity` | Implement `message_activities` as a separate child stream of `users` using `GET /chat/users/{zoom_user_id}/messages`. |
+| `cpt-insightspec-fr-zoom-message-collection-strategy` | Keep message collection independent from meeting enrichment and do not require meeting-scoped message linkage. |
+| `cpt-insightspec-fr-zoom-user-identity-support` | Implement `users` over `GET /users` and retain `zoom_user_id`, `email`, and display attributes. |
+| `cpt-insightspec-fr-zoom-incremental-collection` | Configure stateful incremental sync only for `meetings`; other streams are bounded reads or child streams driven by parent output. |
 
 #### NFR Allocation
 
-| NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
-|--------|-------------|--------------|-----------------|----------------------|
-| `cpt-insightspec-nfr-zoom-freshness` | New meeting and message activity available within 24 hours | Scheduler, discovery cursoring, replay windows | Use frequent scheduled runs with bounded overlap windows and independent cursors for discovery and message collection. | Run log latency metrics and downstream Bronze freshness checks |
-| `cpt-insightspec-nfr-zoom-enrichment-completeness` | 95% of discovered meetings fully enriched with detail and participants | Enrichment queue, meeting state model | Track enrichment status per meeting and retry incomplete meetings until success or explicit source limitation is recorded. | Meeting completeness counters and audit queries |
-| `cpt-insightspec-nfr-zoom-operational-resilience` | Retries and overlaps must not create inconsistent counts | Idempotence keys, overlap window policy, replay-safe writes | Use deterministic unique keys and last-write-wins versioning for replayed windows. | Replay tests, duplicate detection queries, run comparison checks |
+| NFR / quality concern | Current design response |
+|-----------------------|-------------------------|
+| Freshness | `meetings` uses stateful incremental sync; messages use a bounded request window from `start_date` to `now` |
+| Idempotence | Primary keys are defined for all four streams and deterministic identity is built in transformations |
+| Operational visibility | Per-record technical fields plus Airbyte runtime state; no connector-emitted run table |
+| Simplicity / reproducibility | All implemented behavior is expressed directly in the declarative manifest |
 
 ### 1.3 Architecture Layers
 
 ```mermaid
 flowchart TD
-    A[Zoom APIs] --> B[Capability Resolver]
-    B --> C[Meeting Discovery]
-    B --> D[Message Activity Collector]
-    B --> E[User Sync]
-    C --> F[Meeting Enrichment Queue]
-    F --> G[Meeting Detail Collector]
-    F --> H[Participant Collector]
-    G --> I[Bronze Writer]
-    H --> I
-    D --> I
-    E --> I
-    I --> J[Bronze Tables]
-    I --> K[Run Logger]
-    K --> L[zoom_collection_runs]
+    A["Zoom REST API"] --> B["Airbyte Declarative Source"]
+    B --> C["users stream"]
+    B --> D["meetings stream"]
+    D --> E["participants substream"]
+    C --> F["message_activities substream"]
+    C --> G["Emitted source records"]
+    D --> G
+    E --> G
+    F --> G
 ```
 
-- [ ] `p3` - **ID**: `cpt-insightspec-tech-zoom-connector-layers`
-
-| Layer | Responsibility | Technology |
-|-------|---------------|------------|
-| Source Integration | Call the configured Zoom endpoints and collect Zoom entities | Zoom REST APIs, OAuth 2.0 Server-to-Server app |
-| Collection Orchestration | Manage cursors, overlap windows, queued enrichment, retries | Existing repository connector runtime and scheduled batch jobs |
-| Domain Normalization | Normalize source records into meeting, participant, message, user, and run entities | Connector transformation layer |
-| Persistence | Write idempotent Bronze rows and run state | Bronze storage used by repository connector specs |
+| Layer | Responsibility | Current implementation |
+|-------|---------------|------------------------|
+| Source access | Authenticate and call Zoom APIs | `base_requester` with Server-to-Server OAuth |
+| Stream execution | Read records, paginate, partition substreams | Airbyte declarative runtime |
+| Light normalization | Add keys and technical metadata | `transformations` in manifest |
+| Persistence handoff | Emit records to destination | Airbyte source output contract |
 
 ## 2. Principles & Constraints
 
 ### 2.1 Design Principles
 
-#### Meeting Evidence Is Authoritative
+#### Manifest-Driven Simplicity
 
-- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-meeting-evidence-authoritative`
+- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-manifest-driven`
 
-Meeting-level and participant-level records are the authoritative synchronous collaboration evidence for Zoom. Daily summaries may be derived later, but the connector design centers on preserving source-native meeting identities and attendance evidence first.
+The specification must describe only behavior that the current declarative manifest actually implements or that can be deterministically derived from it.
 
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet.
+#### Meeting-First Identity
 
-#### Strongest Supported Linkage Only
+- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-meeting-identity`
 
-- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-strongest-supported-linkage`
+Meeting records use a canonical non-null `meeting_instance_key` derived from the strongest available source identifier, while preserving `meeting_series_id`, `meeting_occurrence_id`, and `meeting_uuid`.
 
-The connector preserves the strongest source-supported relationship between records and leaves unsupported relationships null. It does not infer message-to-meeting linkage, organizer semantics, or user mappings that Zoom does not explicitly provide.
+#### Separate Message Flow
 
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet.
+- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-separate-message-flow`
 
-#### Canonical Meeting Instance Identity
+Message activity is collected from a user-scoped message endpoint and is not coupled to meeting enrichment in the current implementation.
 
-- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-canonical-meeting-instance-identity`
+#### Minimal Technical Enrichment
 
-Every persisted meeting-scoped record uses a non-null canonical `meeting_instance_key` derived from the strongest source-supported concrete meeting identity available for that record. Source identifiers such as series ID, occurrence ID, and UUID are preserved separately so the connector stays source-faithful while avoiding nullable fields in authoritative primary keys.
+- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-light-normalization`
 
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet.
-
-#### Separate Async and Sync Flows
-
-- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-separate-async-sync-flows`
-
-Meeting enrichment and message collection are distinct flows with separate cursors, retries, and observability. This keeps mandatory message collection from being blocked by meeting-only APIs and avoids forcing unsupported coupling between synchronous and asynchronous data.
-
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet.
-
-#### Replay Must Be Safe
-
-- [ ] `p2` - **ID**: `cpt-insightspec-principle-zoom-replay-safe`
-
-Incremental windows, retries, and historical replay must be safe to rerun. The connector therefore uses deterministic identity keys and replay-tolerant writes for all persisted entities.
-
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet.
+The current manifest performs light normalization only: stable keys, `tenant_id`, `_airbyte_data_source`, and `_airbyte_collected_at`. It does not implement downstream analytics modeling inside the connector.
 
 ### 2.2 Constraints
 
-#### Zoom Capability Variability
+#### Zoom Scope Dependency
 
-- [ ] `p2` - **ID**: `cpt-insightspec-constraint-zoom-capability-variability`
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-zoom-scopes`
 
-Zoom message activity support, meeting detail visibility, and linkage quality may vary by account plan, enabled products, endpoint availability, and permissions. The design must branch by detected source capability instead of assuming a uniform API surface.
+The message stream depends on Team Chat scopes for `GET /chat/users/{zoom_user_id}/messages`. Missing scopes will block `message_activities` even when meetings and participants work.
 
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet.
+#### Partial Incremental Support
 
-#### Best-Effort Historical Recovery
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-zoom-partial-incremental`
 
-- [ ] `p2` - **ID**: `cpt-insightspec-constraint-zoom-best-effort-history`
+The current manifest implements Airbyte stateful incremental sync only for `meetings`. `participants` is driven by `meetings`, `users` is a paginated bounded read, and `message_activities` currently uses a request window from `start_date` to `now`.
 
-Historical backfill is useful but not guaranteed. The design must allow recovery jobs without making deep historical completeness a hard architectural dependency.
+#### No Connector-Managed Run Table
 
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet.
+- [ ] `p2` - **ID**: `cpt-insightspec-constraint-zoom-no-run-table`
 
-#### No Message Content Persistence
-
-- [ ] `p2` - **ID**: `cpt-insightspec-constraint-zoom-no-message-content`
-
-The connector may inspect message metadata needed for metrics, but it must not persist message bodies. This limits privacy exposure and constrains the Bronze model for async activity.
-
-**ADRs**: Not applicable because no Zoom-specific ADR exists yet.
+The current manifest does not emit `zoom_collection_runs` or per-row `run_id` metadata. Observability is limited to Airbyte runtime behavior plus per-record technical fields.
 
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model
 
-**Technology**: Connector-owned Bronze tables and normalized source records
-
-**Location**: [PRD.md](./PRD.md)
-
-**Core Entities**:
-
-| Entity | Description | Schema |
-|--------|-------------|--------|
-| ZoomMeeting | Meeting discovered from Zoom and enriched with meeting-level metadata | [DESIGN.md](./DESIGN.md) |
-| ZoomMeetingParticipant | Participant attendance evidence for a specific meeting | [DESIGN.md](./DESIGN.md) |
-| ZoomMessageActivity | User-attributed async message activity collected from a separate user-scoped chat flow | [DESIGN.md](./DESIGN.md) |
-| ZoomUser | Lightweight user directory record used for attribution and identity resolution | [DESIGN.md](./DESIGN.md) |
-| ZoomCollectionRun | Run-level observability record with component counters and limitation metadata | [DESIGN.md](./DESIGN.md) |
+| Entity | Implemented by | Notes |
+|--------|----------------|-------|
+| ZoomUser | `users` stream | Lightweight identity support only |
+| ZoomMeeting | `meetings` stream | Incremental source of meeting records |
+| ZoomMeetingParticipant | `participants` stream | Child stream of `meetings` by `meeting_uuid` |
+| ZoomMessageActivity | `message_activities` stream | Child stream of `users` by `zoom_user_id` |
 
 **Relationships**:
-- ZoomMeeting → ZoomMeetingParticipant: one-to-many by `meeting_instance_key`
-- ZoomUser → ZoomMeetingParticipant: one-to-many by source user identity when present
-- ZoomUser → ZoomMessageActivity: one-to-many by source user identity
-- ZoomMeeting → ZoomMessageActivity: optional one-to-many by nullable `linked_meeting_instance_key` only when Zoom exposes reliable linkage
-- ZoomCollectionRun → all entities: one-to-many by `run_id` for observability, not business identity
+- `ZoomMeeting` -> `ZoomMeetingParticipant`: one-to-many by `meeting_instance_key`
+- `ZoomUser` -> `ZoomMessageActivity`: one-to-many by `zoom_user_id`
+- `ZoomUser` may be joined downstream to `participants` by `zoom_user_id` or `email` when source payloads allow it
+- No implemented meeting linkage exists for `message_activities` in the current manifest
 
-**Meeting identity model**:
-- `meeting_series_id`: stable source identifier for the logical Zoom meeting series or parent meeting definition when available
-- `meeting_occurrence_id`: source occurrence identifier for a concrete recurring instance when available
-- `meeting_uuid`: source UUID for a concrete realized meeting instance when available
-- `meeting_instance_key`: authoritative non-null Bronze identity for one concrete persisted meeting instance
-
-**Canonical normalization rules**:
-1. If Zoom provides a concrete realized meeting UUID for the record, normalize `meeting_instance_key = "zoom:uuid:" + normalized(meeting_uuid)`.
-2. Else if Zoom provides a concrete occurrence identifier, normalize `meeting_instance_key = "zoom:occurrence:" + normalized(meeting_series_id) + ":" + normalized(meeting_occurrence_id)`.
-3. Else normalize `meeting_instance_key = "zoom:series-window:" + normalized(meeting_series_id) + ":" + normalized(actual_start_at_or_scheduled_start_at)` using the strongest available source timestamp.
-4. If rule 3 is used, mark `identity_strength = "fallback"` and preserve all raw source identifiers so downstream systems know the identity is weaker than UUID- or occurrence-backed identity.
-
-**Core invariants**:
-- A meeting may exist in Bronze before enrichment is complete, but it must carry an enrichment status
-- A participant row must reference exactly one persisted meeting row
-- A persisted meeting row always has a non-null `meeting_instance_key`
-- Participant duration is derived only from source-provided attendance evidence; it is never inferred from meeting totals
-- A message activity row may be unrelated to any specific meeting and must not be forcibly linked
-- A user record supports identity and attribution only; it is not treated as authoritative workforce directory state
+**Implemented meeting identity model**:
+- `meeting_series_id = record['id']`
+- `meeting_occurrence_id = record.get('occurrence_id')`
+- `meeting_uuid = record.get('uuid')`
+- `meeting_instance_key` uses:
+  1. `zoom:uuid:{meeting_uuid}`
+  2. else `zoom:occurrence:{meeting_series_id}:{meeting_occurrence_id}`
+  3. else `zoom:series-window:{meeting_series_id}:{strongest_available_time}`
 
 ### 3.2 Component Model
 
-```mermaid
-flowchart LR
-    A[Capability Resolver] --> B[Meeting Discovery Collector]
-    B --> C[Enrichment State Store]
-    C --> D[Meeting Detail Collector]
-    C --> E[Participant Collector]
-    A --> F[Message Activity Collector]
-    A --> G[User Sync Collector]
-    D --> H[Bronze Persistence]
-    E --> H
-    F --> H
-    G --> H
-    H --> I[Run Logger]
-```
+#### Declarative Stream Components
 
-#### Capability Resolver
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-capability-resolver`
+- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-declarative-stream-model`
 
 ##### Why this component exists
 
-The connector needs a single place to interpret which Zoom endpoints and linkage semantics are actually available for the configured tenant.
+The current implementation is intentionally limited to the components that are directly represented in the declarative manifest. This keeps the specification reproducible and avoids assuming hidden runtime orchestration.
 
 ##### Responsibility scope
 
-- Resolve whether meeting discovery, meeting detail, participant detail, and the configured separate chat flow are available
-- Publish a capability profile used by downstream collectors
+- Define the shared requester and authentication behavior
+- Define the four implemented streams and their relationships
+- Define pagination, transformations, and the single implemented stateful incremental cursor
 
 ##### Responsibility boundaries
 
-- Does not persist business entities
-- Does not invent availability based on product assumptions; it records only configured or detected capability
+- Does not introduce an external capability resolver
+- Does not introduce an explicit enrichment queue or run table
+- Does not describe behavior that is absent from the current manifest
 
 ##### Related components (by ID)
 
-- `cpt-insightspec-component-zoom-meeting-discovery` — enables meeting discovery strategy
-- `cpt-insightspec-component-zoom-message-collector` — validates separate message flow availability
-
-#### Meeting Discovery Collector
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-meeting-discovery`
-
-##### Why this component exists
-
-Discovery isolates the cheap incremental scan for newly visible meetings from the heavier per-meeting enrichment work.
-
-##### Responsibility scope
-
-- Scan the configured discovery window
-- Normalize source `id`, `uuid`, and `occurrence_id` values into `meeting_instance_key`
-- Persist newly discovered meetings with discovery metadata and enrichment status `pending`
-- Advance the meeting discovery cursor only after the discovery window is durably persisted
-
-##### Responsibility boundaries
-
-- Does not collect participant data
-- Does not require message linkage
-
-##### Related components (by ID)
-
-- `cpt-insightspec-component-zoom-enrichment-coordinator` — hands off meetings for enrichment
-- `cpt-insightspec-component-zoom-bronze-persistence` — writes meeting rows
-
-#### Enrichment Coordinator
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-enrichment-coordinator`
-
-##### Why this component exists
-
-Every newly discovered meeting must be enriched, retried when incomplete, and marked with explicit limitation reasons when Zoom does not provide required evidence.
-
-##### Responsibility scope
-
-- Queue pending meetings for detail and participant collection
-- Track `pending`, `in_progress`, `complete`, and `limited` enrichment states
-- Apply retry and overlap policies
-
-##### Responsibility boundaries
-
-- Does not collect messages except for optional meeting-linked message references when supported
-- Does not derive participant duration beyond storing source evidence
-
-##### Related components (by ID)
-
-- `cpt-insightspec-component-zoom-meeting-detail` — collects meeting metadata
-- `cpt-insightspec-component-zoom-participant-collector` — collects attendance evidence
-
-#### Meeting Detail Collector
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-meeting-detail`
-
-##### Why this component exists
-
-Meeting discovery typically does not return enough data to satisfy the PRD’s meeting-scoped analysis needs.
-
-##### Responsibility scope
-
-- Read per-meeting detail for discovered meetings
-- Normalize organizer, schedule, timing, meeting classification, and any stronger meeting identifiers revealed by detail endpoints
-
-##### Responsibility boundaries
-
-- Does not infer organizer or meeting type fields beyond explicit source values
-- Does not manage retries itself
-
-##### Related components (by ID)
-
-- `cpt-insightspec-component-zoom-enrichment-coordinator` — requests work
-- `cpt-insightspec-component-zoom-bronze-persistence` — writes meeting updates
-
-#### Participant Collector
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-participant-collector`
-
-##### Why this component exists
-
-Participant attendance duration is a hard `p1` requirement and therefore needs a dedicated, replay-safe collector.
-
-##### Responsibility scope
-
-- Collect participant rows for a discovered meeting
-- Reference the parent meeting only through `meeting_instance_key`
-- Persist join and leave evidence and derived duration fields when supported
-- Mark meetings as `limited` when participant data is unavailable or incomplete due to source capability
-
-##### Responsibility boundaries
-
-- Does not infer duration from daily summaries
-- Does not aggregate participants into daily rollups inside Bronze
-
-##### Related components (by ID)
-
-- `cpt-insightspec-component-zoom-enrichment-coordinator` — schedules participant collection
-- `cpt-insightspec-component-zoom-bronze-persistence` — writes participant rows
-
-#### Message Activity Collector
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-message-collector`
-
-##### Why this component exists
-
-Message activity is mandatory, but it is implemented as a dedicated separate flow with its own endpoint behavior and linkage semantics.
-
-##### Responsibility scope
-
-- Collect message activity through the implemented separate user-scoped chat flow
-- Persist optional `linked_meeting_instance_key` only when the source exposes reliable linkage that can be normalized into the canonical meeting identity
-
-##### Responsibility boundaries
-
-- Does not force message rows into meeting enrichment
-- Does not persist message body content
-
-##### Related components (by ID)
-
-- `cpt-insightspec-component-zoom-capability-resolver` — supplies capability profile
-- `cpt-insightspec-component-zoom-user-sync` — supports user attribution
-- `cpt-insightspec-component-zoom-bronze-persistence` — writes message rows
-
-#### User Sync Collector
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-user-sync`
-
-##### Why this component exists
-
-Meetings, participants, and messages need a consistent source-user reference for attribution and downstream identity resolution.
-
-##### Responsibility scope
-
-- Sync lightweight Zoom user records
-- Normalize email and source identifiers
-- Preserve source status and display attributes useful for attribution
-
-##### Responsibility boundaries
-
-- Does not expand into full directory management
-- Does not own cross-source identity matching
-
-##### Related components (by ID)
-
-- `cpt-insightspec-component-zoom-message-collector` — uses user mappings
-- `cpt-insightspec-component-zoom-bronze-persistence` — writes user rows
-
-#### Bronze Persistence and Run Logger
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-zoom-bronze-persistence`
-
-##### Why this component exists
-
-All collectors need a single replay-safe write path and a consistent observability model.
-
-##### Responsibility scope
-
-- Apply idempotent writes for all Bronze entities
-- Attach run metadata, source endpoint metadata, and limitation codes
-- Write run-level counters and completion status
-
-##### Responsibility boundaries
-
-- Does not decide source collection strategy
-- Does not perform downstream Silver transformations
-
-##### Related components (by ID)
-
-- `cpt-insightspec-component-zoom-meeting-discovery` — writes discovered meetings
-- `cpt-insightspec-component-zoom-participant-collector` — writes participants
-- `cpt-insightspec-component-zoom-message-collector` — writes messages
-- `cpt-insightspec-component-zoom-user-sync` — writes users
+- `cpt-insightspec-principle-zoom-manifest-driven`
+- `cpt-insightspec-principle-zoom-meeting-identity`
+- `cpt-insightspec-principle-zoom-separate-message-flow`
+
+| Component | Type | Responsibility |
+|-----------|------|----------------|
+| `base_requester` | Shared requester | Zoom base URL, OAuth, default headers |
+| `users` | root stream | Active Zoom users, paginated |
+| `meetings` | root stream | Meeting discovery with stateful incremental cursor |
+| `participants` | child stream | Per-meeting participant attendance, driven by `meetings` |
+| `message_activities` | child stream | Per-user messages, driven by `users` |
+
+This is the complete current component model. No additional runtime components are assumed by the specification.
 
 ### 3.3 API Contracts
 
-This connector exposes no public repository-facing API contract. Internal collector contracts are implementation details of the connector runtime.
-
-- [ ] `p2` - **ID**: `cpt-insightspec-interface-zoom-connector-runtime`
-
-- **Contracts**: None as public machine-readable contracts in current scope
-- **Technology**: Internal scheduled connector execution
-- **Location**: Not applicable because this design defines an internal connector, not a public service API
-
-**Endpoints Overview**:
-
-| Method | Path | Description | Stability |
-|--------|------|-------------|-----------|
-| N/A | N/A | Not applicable because the Zoom connector does not expose a public API in current scope | stable |
+The connector exposes no public API. Its implementation contract is the declarative source manifest and the Zoom REST endpoints it calls.
 
 ### 3.4 Internal Dependencies
 
-| Dependency Module | Interface Used | Purpose |
-|-------------------|----------------|----------|
-| Bronze ingestion runtime | Connector writer interface | Persist normalized Zoom entities and run logs |
-| Scheduler and job runner | Scheduled batch execution | Trigger recurring discovery, enrichment, message, and replay jobs |
-| Identity Manager pipeline | Bronze-to-Silver identity resolution contract | Resolve normalized email and user identifiers to canonical people downstream |
-
-**Dependency Rules** (per project conventions):
-- No circular dependencies
-- Always use repository connector runtime abstractions for persistence and scheduling
-- The Zoom connector owns source collection only; downstream identity and analytics remain separate responsibilities
+| Dependency | Usage |
+|------------|-------|
+| Airbyte declarative runtime | Executes manifest, pagination, substreams, and stateful incremental cursor for `meetings` |
+| Destination configured in Airbyte | Receives emitted records |
 
 ### 3.5 External Dependencies
 
-#### Zoom APIs
-
-| Dependency Module | Interface Used | Purpose |
-|-------------------|---------------|---------|
-| Zoom account integration | Server-to-Server OAuth authenticated REST APIs | Provide meetings, participants, user directory data, and message activity through the configured endpoint set |
-
-**Dependency Rules** (per project conventions):
-- Only the Zoom connector integration talks to Zoom directly
-- Endpoint usage must respect capability detection rather than static assumptions
-- Unsupported or unavailable fields must remain null with explicit limitation metadata
+| Dependency | Usage |
+|------------|-------|
+| Zoom Server-to-Server OAuth | Access token acquisition using `account_id`, `client_id`, and `client_secret` |
+| `GET /users` | `users` stream |
+| `GET /metrics/meetings` | `meetings` stream |
+| `GET /metrics/meetings/{meeting_uuid}/participants` | `participants` stream |
+| `GET /chat/users/{zoom_user_id}/messages` | `message_activities` stream |
 
 ### 3.6 Interactions & Sequences
 
-#### Meeting Discovery and Enrichment
+#### Meetings and Participants
 
-**ID**: `cpt-insightspec-seq-zoom-meeting-enrichment`
-
-**Use cases**: `cpt-insightspec-usecase-zoom-collect-meetings`
-
-**Actors**: `cpt-insightspec-actor-zoom-operator`, `cpt-insightspec-actor-zoom-api`
+- [ ] `p2` - **ID**: `cpt-insightspec-seq-zoom-meetings-participants`
 
 ```mermaid
 sequenceDiagram
-    Scheduler->>MeetingDiscovery: run discovery window
-    MeetingDiscovery->>ZoomAPI: list discoverable meetings
-    ZoomAPI-->>MeetingDiscovery: meeting identities
-    MeetingDiscovery->>MeetingDiscovery: normalize to meeting_instance_key
-    MeetingDiscovery->>Bronze: upsert zoom_meetings (pending)
-    MeetingDiscovery->>EnrichmentCoordinator: enqueue meeting_instance_keys
-    EnrichmentCoordinator->>MeetingDetailCollector: fetch meeting detail
-    MeetingDetailCollector->>ZoomAPI: get meeting detail
-    ZoomAPI-->>MeetingDetailCollector: meeting metadata
-    MeetingDetailCollector->>Bronze: upsert zoom_meetings (enriched fields)
-    EnrichmentCoordinator->>ParticipantCollector: fetch participants
-    ParticipantCollector->>ZoomAPI: get meeting participants
-    ZoomAPI-->>ParticipantCollector: participant attendance evidence
-    ParticipantCollector->>Bronze: upsert zoom_meeting_participants
-    ParticipantCollector->>Bronze: mark meeting complete or limited
+    participant Airbyte
+    participant Zoom
+    Airbyte->>Zoom: GET /metrics/meetings?from=...&to=...&type=past&page_size=...
+    Zoom-->>Airbyte: meetings + next_page_token
+    Airbyte->>Airbyte: add meeting identity fields + meeting_instance_key
+    Airbyte->>Zoom: GET /metrics/meetings/{meeting_uuid}/participants?type=past&page_size=...
+    Zoom-->>Airbyte: participants + next_page_token
+    Airbyte->>Airbyte: add participant_key, join_at, leave_at, meeting_instance_key
 ```
 
-**Description**: Discovery identifies newly visible meetings and persists them immediately. Enrichment then collects detail and participant evidence in a replay-safe way until each meeting is complete or explicitly limited by source capability.
+#### Users and Messages
 
-#### Message Activity Collection
-
-**ID**: `cpt-insightspec-seq-zoom-message-collection`
-
-**Use cases**: `cpt-insightspec-usecase-zoom-collect-messages`
-
-**Actors**: `cpt-insightspec-actor-zoom-analyst`, `cpt-insightspec-actor-zoom-api`
+- [ ] `p2` - **ID**: `cpt-insightspec-seq-zoom-users-messages`
 
 ```mermaid
 sequenceDiagram
-    Scheduler->>CapabilityResolver: resolve message capabilities
-    CapabilityResolver-->>MessageCollector: capability profile
-    MessageCollector->>ZoomAPI: read message/chat flow
-    ZoomAPI-->>MessageCollector: message metadata rows
-    MessageCollector->>UserSync: resolve source user attributes
-    UserSync-->>MessageCollector: user mapping
-    MessageCollector->>Bronze: upsert zoom_message_activity
+    participant Airbyte
+    participant Zoom
+    Airbyte->>Zoom: GET /users?page_size=...&status=active
+    Zoom-->>Airbyte: users + next_page_token
+    Airbyte->>Zoom: GET /chat/users/{zoom_user_id}/messages?from=...&to=...&page_size=...
+    Zoom-->>Airbyte: message rows + next_page_token
+    Airbyte->>Airbyte: add message_activity_id, collection_mode, activity_date, message_count
 ```
-
-**Description**: Message activity is collected independently from meeting enrichment. The current implementation reads a separate user-scoped chat flow and persists optional meeting linkage only when Zoom provides trustworthy association in that payload.
 
 ### 3.7 Database schemas & tables
 
 - [ ] `p3` - **ID**: `cpt-insightspec-db-zoom-bronze-model`
 
-#### Table: `zoom_meetings`
-
-**ID**: `cpt-insightspec-dbtable-zoom-meetings`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `meeting_instance_key` | String | Canonical non-null Bronze identity for the concrete meeting instance |
-| `meeting_series_id` | String | Source-native logical meeting or series identifier |
-| `meeting_occurrence_id` | String | Source occurrence identifier for a concrete recurring instance when available |
-| `meeting_uuid` | String | Source UUID for a concrete realized meeting instance when available |
-| `identity_strength` | String | `uuid`, `occurrence`, or `fallback` depending on normalization quality |
-| `host_user_id` | String | Source-native host identifier when provided |
-| `topic` | String | Meeting topic or title |
-| `meeting_type` | String | Source-provided meeting classification |
-| `scheduled_start_at` | DateTime | Scheduled start time when provided |
-| `actual_start_at` | DateTime | Actual start time when provided |
-| `actual_end_at` | DateTime | Actual end time when provided |
-| `duration_seconds` | Int | Meeting duration in seconds when derivable from source evidence |
-| `discovered_at` | DateTime | Timestamp when the connector first discovered the meeting |
-| `enrichment_status` | String | `pending`, `in_progress`, `complete`, `limited` |
-| `limitation_code` | String | Explicit source-side limitation when not fully enriched |
-| `source_endpoint` | String | Endpoint or flow that produced the row |
-| `run_id` | String | Collection run identifier |
-| `data_source` | String | Always `insight_zoom` |
-| `_version` | Int | Replay-safe version marker |
-| `metadata` | String (JSON) | Raw source payload or normalized metadata |
-
-**PK**: `meeting_instance_key`
-
-**Constraints**: `meeting_instance_key` required; `meeting_series_id` required when available from source; `meeting_occurrence_id` and `meeting_uuid` may be null depending on endpoint capability
-
-**Additional info**: Primary authoritative meeting table for all synchronous Zoom data. `meeting_instance_key` is always derived from the strongest available source identifier and never contains nullable components.
-
-#### Table: `zoom_meeting_participants`
-
-**ID**: `cpt-insightspec-dbtable-zoom-meeting-participants`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `meeting_instance_key` | String | Canonical parent meeting instance identity |
-| `participant_key` | String | Stable participant key from user id, email, or source participant id |
-| `zoom_user_id` | String | Source-native user id when known |
-| `email` | String | Participant email when known |
-| `display_name` | String | Participant display name from source |
-| `join_at` | DateTime | Join timestamp |
-| `leave_at` | DateTime | Leave timestamp |
-| `attendance_duration_seconds` | Int | Derived from source attendance evidence |
-| `attendance_status` | String | `present`, `partial`, `unknown` |
-| `run_id` | String | Collection run identifier |
-| `data_source` | String | Always `insight_zoom` |
-| `_version` | Int | Replay-safe version marker |
-| `metadata` | String (JSON) | Raw participant payload |
-
-**PK**: `meeting_instance_key`, `participant_key`, `join_at`
-
-**Constraints**: Parent meeting must exist by `meeting_instance_key`; duration derived only from explicit attendance evidence
-
-**Additional info**: This table satisfies the hard `p1` participant duration requirement and is the only authoritative source for participant attendance duration
-
-#### Table: `zoom_message_activity`
-
-**ID**: `cpt-insightspec-dbtable-zoom-message-activity`
-
-**Schema**:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `message_activity_id` | String | Stable unique identifier from direct event id, aggregate key, or derived source key |
-| `zoom_user_id` | String | Source-native user id when known |
-| `email` | String | User email when known |
-| `activity_date` | DateTime | Activity timestamp or aggregation date |
-| `channel_type` | String | Source-supported message surface classification |
-| `message_count` | Int | Count represented by this row |
-| `aggregation_level` | String | `event`, `conversation_day`, `user_day`, or other source-supported grain |
-| `collection_mode` | String | Always `separate_chat_flow` in the current implementation |
-| `linked_meeting_instance_key` | String | Nullable canonical meeting link only when provided reliably by source |
-| `linked_meeting_series_id` | String | Nullable source series identifier preserved for traceability |
-| `linked_meeting_occurrence_id` | String | Nullable source occurrence identifier preserved for traceability |
-| `linked_meeting_uuid` | String | Nullable source meeting UUID preserved for traceability |
-| `source_endpoint` | String | Endpoint or flow used to collect this row |
-| `run_id` | String | Collection run identifier |
-| `data_source` | String | Always `insight_zoom` |
-| `_version` | Int | Replay-safe version marker |
-| `metadata` | String (JSON) | Raw message metadata without content |
-
-**PK**: `message_activity_id`
-
-**Constraints**: Message body content must not be persisted; `linked_meeting_instance_key` may be null
-
-**Additional info**: Stores async activity collected from the connector's separate message flow while preserving linkage quality
+The current manifest emits four logical source entities. The table names below are conceptual Bronze names used in project documentation; the manifest stream names are `users`, `meetings`, `participants`, and `message_activities`.
 
 #### Table: `zoom_users`
 
-**ID**: `cpt-insightspec-dbtable-zoom-users`
-
-**Schema**:
-
 | Column | Type | Description |
 |--------|------|-------------|
-| `zoom_user_id` | String | Source-native user identifier |
-| `email` | String | Normalized email for identity resolution |
-| `display_name` | String | Display name |
-| `first_name` | String | First name |
-| `last_name` | String | Last name |
-| `status` | String | Source account status |
-| `user_type` | Int | Zoom account type when provided |
+| `tenant_id` | String | Value copied from `config['insight_tenant_id']` |
+| `zoom_user_id` | String | Source-native Zoom user identifier |
+| `email` | String | User email when present |
+| `first_name` | String | User first name |
+| `last_name` | String | User last name |
+| `display_name` | String | User display name |
+| `type` | Int | Zoom account type |
+| `status` | String | User status |
 | `timezone` | String | User timezone |
-| `collected_at` | DateTime | Sync timestamp |
-| `run_id` | String | Collection run identifier |
-| `data_source` | String | Always `insight_zoom` |
-| `_version` | Int | Replay-safe version marker |
-| `metadata` | String (JSON) | Raw user payload |
+| `_airbyte_data_source` | String | Always `insight_zoom` |
+| `_airbyte_collected_at` | DateTime | Ingestion timestamp |
 
-**PK**: `zoom_user_id`
-
-**Constraints**: Email may be null for some source users; identity resolution must tolerate partial user profiles
-
-**Additional info**: Support-only directory table for attribution and downstream person matching
-
-#### Table: `zoom_collection_runs`
-
-**ID**: `cpt-insightspec-dbtable-zoom-collection-runs`
-
-**Schema**:
+#### Table: `zoom_meetings`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `run_id` | String | Unique run identifier |
-| `started_at` | DateTime | Run start timestamp |
-| `completed_at` | DateTime | Run end timestamp |
-| `status` | String | `running`, `completed`, `completed_with_limitations`, `failed` |
-| `run_type` | String | `scheduled_incremental`, `replay`, `backfill`, `manual_repair` |
-| `discovery_window_start` | DateTime | Meeting discovery window start |
-| `discovery_window_end` | DateTime | Meeting discovery window end |
-| `message_window_start` | DateTime | Message collection window start |
-| `message_window_end` | DateTime | Message collection window end |
-| `meetings_discovered` | Int | Newly discovered meetings |
-| `meetings_enriched` | Int | Meetings completed in this run |
-| `meetings_limited` | Int | Meetings limited by source capability |
-| `participants_collected` | Int | Participant rows written |
-| `messages_collected` | Int | Message activity rows written |
-| `users_collected` | Int | User rows written |
-| `retries_triggered` | Int | Retried enrichment or message work |
-| `api_calls` | Int | Total source calls |
-| `errors` | Int | Error count |
-| `limitation_summary` | String (JSON) | Aggregated source-capability limitations |
-| `settings` | String (JSON) | Effective run configuration |
-| `data_source` | String | Always `insight_zoom` |
-| `_version` | Int | Replay-safe version marker |
+| `tenant_id` | String | Value copied from `config['insight_tenant_id']` |
+| `meeting_instance_key` | String | Canonical non-null meeting key |
+| `meeting_series_id` | String | Source meeting series identifier |
+| `meeting_occurrence_id` | String | Source occurrence identifier |
+| `meeting_uuid` | String | Source meeting UUID |
+| `identity_strength` | String | `uuid`, `occurrence`, or `fallback` |
+| `host_user_id` | String | Host user identifier when present in payload |
+| `topic` | String | Meeting topic when present |
+| `meeting_type` | String / Int | Source meeting type field |
+| `scheduled_start_at` | DateTime | Scheduled start when present |
+| `actual_start_at` | DateTime | Actual start when present |
+| `actual_end_at` | DateTime | Actual end when present |
+| `duration_seconds` | Int | Duration when present/derivable in payload |
+| `discovered_at` | DateTime | Discovery timestamp when present |
+| `enrichment_status` | String | Currently set to `pending` by manifest |
+| `limitation_code` | String | Limitation marker when present |
+| `source_endpoint` | String | Source endpoint when present |
+| `_airbyte_data_source` | String | Always `insight_zoom` |
+| `_airbyte_collected_at` | DateTime | Ingestion timestamp |
 
-**PK**: `run_id`
+#### Table: `zoom_meeting_participants`
 
-**Constraints**: Monitoring table only; not used as business activity source
+| Column | Type | Description |
+|--------|------|-------------|
+| `tenant_id` | String | Value copied from `config['insight_tenant_id']` |
+| `meeting_instance_key` | String | Canonical parent meeting key |
+| `meeting_series_id` | String | Source meeting series identifier when present |
+| `meeting_occurrence_id` | String | Source occurrence identifier when present |
+| `meeting_uuid` | String | Parent meeting UUID from partition context |
+| `participant_key` | String | Derived from id, user_id, email, or name |
+| `zoom_user_id` | String | Source participant user identifier when present |
+| `email` | String | Participant email when present |
+| `display_name` | String | Participant display name when present |
+| `join_at` | DateTime | Join time |
+| `leave_at` | DateTime | Leave time |
+| `attendance_duration_seconds` | Int | Source attendance duration |
+| `attendance_status` | String | Attendance status when present |
+| `_airbyte_data_source` | String | Always `insight_zoom` |
+| `_airbyte_collected_at` | DateTime | Ingestion timestamp |
 
-**Additional info**: Primary observability artifact for freshness, completeness, and limitation reporting
+#### Table: `zoom_message_activity`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `tenant_id` | String | Value copied from `config['insight_tenant_id']` |
+| `message_activity_id` | String | Source event ID or deterministic fallback key |
+| `zoom_user_id` | String | Parent user identifier from partition context |
+| `email` | String | Email when present in payload |
+| `activity_date` | DateTime | `date`, `message_time`, or `timestamp` from payload |
+| `channel_type` | String | Source channel type or `direct` fallback |
+| `message_count` | Int | Source count or `1` fallback |
+| `aggregation_level` | String | Source aggregation level when present |
+| `collection_mode` | String | Always `separate_chat_flow` |
+| `source_endpoint` | String | Always `chat/users/{userId}/messages` in current implementation |
+| `_airbyte_data_source` | String | Always `insight_zoom` |
+| `_airbyte_collected_at` | DateTime | Ingestion timestamp |
+
+There is no implemented `zoom_collection_runs` table in the current manifest.
 
 ### 3.8 Deployment Topology
 
-Not applicable because this design covers a repository connector run inside the existing batch ingestion environment rather than a separately deployed Zoom-specific service.
-
-- [ ] `p3` - **ID**: `cpt-insightspec-topology-zoom-batch-runtime`
+The connector is deployed as a declarative Airbyte source configuration executed by the Airbyte platform. No Zoom-specific standalone service is assumed.
 
 ## 4. Additional context
 
 ### Source Collection Strategy
 
-The connector uses three independent but coordinated source collection strategies:
-
-1. Meeting discovery scans the configured incremental window for newly visible meetings and persists them immediately.
-2. Meeting enrichment reads per-meeting detail and participant attendance evidence for every discovered meeting until complete or explicitly limited.
-3. Message activity collection runs through a separate user-scoped chat flow and remains operationally independent from meeting enrichment.
-
-This keeps the implementation practical and aligned with the approved scope without allowing message requirements to disappear.
+The current manifest uses one shared requester and four streams:
+- `users` reads active users directly
+- `meetings` reads meetings directly
+- `participants` fans out from `meetings`
+- `message_activities` fans out from `users`
 
 ### Incremental Discovery Strategy
 
-Meeting discovery maintains its own durable cursor and always reads an overlap window behind the last successful watermark. Newly discovered meetings are identified by `meeting_instance_key` and inserted or updated idempotently. A meeting is considered newly discovered when its canonical `meeting_instance_key` has not yet been persisted, regardless of whether the same time range has been scanned before.
+Only `meetings` is configured as a stateful incremental stream. It uses:
+- `DatetimeBasedCursor`
+- `cursor_field = end_time`
+- `from` / `to` request parameters
+- `lookback_window = P7D`
+- `step = P30D`
+
+This is the only Airbyte-managed cursor strategy currently implemented in the manifest.
 
 ### Incremental Enrichment Strategy
 
-Enrichment is state-driven rather than purely window-driven. Every newly discovered meeting enters `pending`. The coordinator repeatedly retries pending or limited meetings inside a bounded replay window until:
-- detail and participant evidence are fully collected,
-- or the source explicitly lacks the required participant visibility,
-- or the meeting ages out of the replay policy and remains marked `limited`.
+The current manifest does not implement a separate enrichment queue or state machine. Instead:
+- `meetings` is the discovery stream
+- `participants` is fetched as a child stream for emitted meeting rows
 
-This keeps ongoing incremental collection mandatory without blocking the pipeline on a single failing meeting.
+This provides practical meeting/participant collection without introducing extra orchestration components.
 
 ### Endpoint Usage Strategy
 
-The current implementation uses the following Zoom API contract:
-- `GET /users` for user directory support and message-flow partitioning
-- `GET /metrics/meetings` for meeting discovery, using `page_size` and `next_page_token` pagination
-- `GET /metrics/meetings/{meeting_uuid}/participants` for meeting-scoped participant attendance evidence, with encoded meeting UUID, tolerant handling for source-side `404` gaps, and `page_size` plus `next_page_token` pagination
-- `GET /chat/users/{zoom_user_id}/messages` for separate user-scoped message activity collection
+Implemented endpoints:
+- `GET /users`
+- `GET /metrics/meetings`
+- `GET /metrics/meetings/{meeting_uuid}/participants`
+- `GET /chat/users/{zoom_user_id}/messages`
 
-The declarative source manifest names the corresponding source streams `users`, `meetings`, `participants`, and `message_activities`. These stream names are implementation identifiers only; Bronze persistence remains `zoom_users`, `zoom_meetings`, `zoom_meeting_participants`, and `zoom_message_activity`.
-
-Server-to-Server OAuth token acquisition uses `account_id`, `client_id`, and `client_secret`. The design still records source limitations when any endpoint does not expose complete data, but it does not model multiple interchangeable message collection strategies in the current implementation. It never creates synthetic meeting-message joins to compensate.
+The current implementation also passes:
+- `status=active` for `users`
+- `type=past` for `meetings`
+- `type=past` for `participants`
+- `page_size` where supported
+- `from` / `to` only for `meetings` incremental windows and `message_activities` request windows
 
 ### Identity Model
 
-The primary source identity keys are `zoom_user_id` and normalized `email` for people, plus a normalized meeting identity stack for synchronous activity. `zoom_user_id` is authoritative for Zoom-local attribution. `email` is the preferred downstream cross-source identity anchor when present. For meetings, the connector preserves `meeting_series_id`, `meeting_occurrence_id`, and `meeting_uuid` separately, then derives a non-null canonical `meeting_instance_key` from the strongest available concrete identifier. Participant and message rows may contain only partial source identity depending on payload quality, so the design preserves all available identifiers independently and does not require perfect user directory coverage for writes to succeed.
+People:
+- `zoom_user_id` is the source-native identity anchor
+- `email` is the preferred downstream cross-source join key when present
+
+Meetings:
+- `meeting_series_id`
+- `meeting_occurrence_id`
+- `meeting_uuid`
+- derived `meeting_instance_key`
 
 ### Record Linkage Model
 
-Record linkage is explicit and asymmetric:
-- meetings link strongly to participants through required `meeting_instance_key` foreign keys
-- users link strongly to meetings, participants, and messages when source identifiers are present
-- messages link weakly to meetings through optional nullable `linked_meeting_instance_key`
+Implemented strong linkages:
+- `meetings` -> `participants` through `meeting_instance_key`
+- `users` -> `message_activities` through `zoom_user_id`
 
-This model preserves the strongest available linkage while preventing unsupported semantics from entering Bronze.
+Not implemented in current manifest:
+- direct `message_activities` -> `meetings` linkage fields
+- run-level linkage fields such as `run_id`
 
 ### Deduplication and Idempotence Approach
 
-All entity writes are upserts keyed by deterministic primary identity:
-- meetings by `meeting_instance_key`
-- participants by `(meeting_instance_key, participant_key, join_at)`
-- messages by `message_activity_id`
-- users by `zoom_user_id`
-- runs by `run_id`
+Implemented primary keys:
+- `users`: `zoom_user_id`
+- `meetings`: `meeting_instance_key`
+- `participants`: `(meeting_instance_key, participant_key, join_at)`
+- `message_activities`: `message_activity_id`
 
-`_version` stores a monotonically increasing replay marker such as collection timestamp or source freshness marker. Replayed rows overwrite older versions for the same identity key. This supports overlap windows, retries, and manual repair runs without duplicate growth.
-
-Meeting identity normalization is deterministic:
-- prefer `meeting_uuid` when available because it most directly identifies a realized meeting instance
-- else prefer `(meeting_series_id, meeting_occurrence_id)` when occurrence identity is present
-- else derive `meeting_instance_key` from `meeting_series_id` plus strongest available source timestamp
-
-Fallback-derived keys are allowed only when stronger identifiers are unavailable from the source endpoint. When fallback is used, `identity_strength = "fallback"` must be persisted so downstream consumers understand that identity quality is weaker and cross-endpoint reconciliation may require care.
+The manifest does not currently define `_version` markers or a run table.
 
 ### Retry, Replay, and Overlap-Window Behavior
 
-Scheduled incremental runs use a short overlap window for meetings and messages to catch late-arriving or delayed source visibility. Replay and backfill runs reuse the same collectors and keys but widen the requested windows. Partial failures do not roll back successful entity writes; instead they leave targeted entities eligible for retry and mark the run `completed_with_limitations` or `failed` based on configured thresholds.
+Implemented retry behavior comes from `base_error_handler`:
+- `429` and `503` use `Retry-After`
+- `500`, `502`, `504` retry with exponential backoff
+
+`meetings` additionally uses a 7-day lookback window in its incremental cursor configuration.
 
 ### Run Logging and Observability Model
 
-Observability is built around `zoom_collection_runs` plus per-row run attribution. Each run captures:
-- independent windows for meetings and messages
-- counters for discovered, enriched, limited, and retried entities
-- error counts and limitation summaries
-- effective capability profile and source endpoint usage
+The current manifest exposes only per-record technical metadata:
+- `tenant_id`
+- `_airbyte_data_source`
+- `_airbyte_collected_at`
 
-This gives operators direct visibility into whether low message counts are caused by low activity, source capability gaps, or collection failures.
+There is no implemented source-emitted run log stream.
 
 ### Assumptions and Risks That Affect Implementation
 
-- Assumption: the repository’s existing Bronze ingestion runtime can support replay-safe upsert semantics and run attribution for connector rows.
-- Assumption: source payloads provide enough participant timing evidence to calculate attendance duration for most eligible meetings.
-- Assumption: message activity may arrive at a different grain than meetings and should still be preserved.
-- Assumption: the current connector implementation authenticates through Zoom Server-to-Server OAuth using `account_id`, `client_id`, and `client_secret`.
-- Assumption: Zoom endpoints may expose `id`, `uuid`, and `occurrence_id` inconsistently, but at least one stable concrete meeting identity path is available for most collected meetings.
-- Risk: the separate user-scoped message flow may be expensive or incomplete for some tenants, increasing API cost and runtime.
-- Risk: different endpoints may surface different meeting identifier forms for the same real-world meeting instance, making canonical normalization and reconciliation critical to avoid split identity.
-- Risk: recurring meetings may require careful handling of occurrence identity to avoid merging separate meeting instances.
-- Risk: participant payload quality may differ across meeting types, making completeness highly dependent on source capabilities.
+- Team Chat scopes are still required for `message_activities`
+- Message activity is currently implemented only through `chat/users/{zoom_user_id}/messages`
+- `message_activities` is not yet configured as a stateful Airbyte incremental stream
+- Some schema fields remain source-pass-through and may be null depending on payload quality
+- The specification intentionally mirrors the current manifest rather than a more ambitious future runtime
 
 ## 5. Traceability
 
-- **PRD**: [PRD.md](./PRD.md)
-- **ADRs**: [ADR/](./ADR/)
-- **Features**: Not applicable because feature-level specs do not exist yet for the Zoom connector
+| Artifact | Role |
+|---------|------|
+| [PRD.md](./PRD.md) | Product intent and scope |
+| [DESIGN.md](./DESIGN.md) | Current implementation-aligned technical design |
+| [zoom.md](../zoom.md) | Standalone connector reference aligned to this design |
+| [`manifest.yaml`](/Users/voltenko/Projects/Work/insight/src/connectors/collaboration/zoom/manifest.yaml) | Source of truth for executable current implementation |
