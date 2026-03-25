@@ -419,7 +419,11 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 
 **Stability**: stable
 
-**Description**: Ten Bronze streams with defined schemas — `jira_issue`, `jira_issue_history`, `jira_issue_ext`, `jira_worklogs`, `jira_comments`, `jira_projects`, `jira_issue_links`, `jira_sprints`, `jira_user`, `jira_collection_runs`. All user-attributed streams reference `account_id` as the user key. Issues use `updated` as the cursor field.
+**Description**: Ten Bronze streams with defined schemas — `jira_issue`, `jira_issue_history`, `jira_issue_ext`, `jira_worklogs`, `jira_comments`, `jira_projects`, `jira_issue_links`, `jira_sprints`, `jira_user`, `jira_collection_runs`. All user-attributed streams reference `account_id` as the user key. Issues use `updated` as the cursor field. The URN-based primary key for issue records follows the format `urn:jira:{tenant_id}:{source_instance_id}:{issue_key}` (see FR `cpt-insightspec-fr-jira-instance-context`).
+
+**Field-level schemas**: Defined in [`jira.md`](../jira.md) (Bronze table definitions with column types, descriptions, and API field mappings).
+
+**Bronze-to-Silver mapping**: Defined in the [Task Tracking unified schema](../README.md) (Section "Jira" — mapping from `jira_*` Bronze tables to `task_tracker_*` Silver tables).
 
 **Breaking Change Policy**: Adding new fields is non-breaking. Removing or renaming fields requires a migration.
 

@@ -266,7 +266,7 @@ The connector **MUST** extract the Slack user directory from `users.list`, inclu
 
 The `collab_users` table **MUST** preserve historical state changes using the SCD Type 2 pattern. Each user record **MUST** include `valid_from` (timestamp when this state became effective) and `valid_to` (timestamp when this state was superseded, or `null` for the current record). When the connector detects a change in a user's attributes (email, role, active status, display name) between the current `users.list` response and the most recent stored record, it **MUST** close the previous record (set `valid_to = collected_at`) and insert a new record with `valid_from = collected_at`.
 
-The Airbyte sync mode for `collab_users` **MUST** be **Full Refresh | Append** (not overwrite), so that each run appends the current snapshot. SCD Type 2 versioning is applied either at the connector level (comparing against previously emitted state) or at the Bronze ingestion layer (merge logic in the destination).
+The Airbyte sync mode for `collab_users` **MUST** be **Full Refresh | Append** (not overwrite), so that each run appends the current snapshot. SCD Type 2 versioning **MUST** be applied at the Bronze ingestion layer via destination MERGE logic that compares incoming records against the existing table, closes superseded records (set `valid_to = collected_at`), and inserts new records (set `valid_from = collected_at`). This approach is required because Declarative YAML does not natively support stateful change detection; connector-level SCD would require Python CDK migration.
 
 **Rationale**: `users.list` is a full refresh endpoint — it returns current state only. Without SCD Type 2, a user's email change (e.g., name change after marriage) or role change (promoted to admin) silently overwrites history. Historical analytics ("how many admins did we have 6 months ago?", "which email was this person using when they sent those messages?") require point-in-time user state.
 
@@ -460,6 +460,7 @@ The connector **MUST** extract activity for all non-bot users in the workspace o
 - **Invalid token**: System reports authentication failure; operator corrects the token
 - **Missing scopes**: System reports which scopes are missing (e.g., `users:read.email`); operator updates the app permissions
 - **Enterprise Grid without admin token**: System falls back to standard collection strategy with a warning about scale limitations
+- **Enterprise Grid with Deep Channel Analytics**: Operator enables "Deep Channel Analytics" during primary connection setup. System provides instructions to create a second Airbyte connection: (1) use the same Slack connector and credentials, (2) configure as Standard Workspace strategy, (3) set schedule to weekly or on-demand, (4) target the same Bronze tables (upserts per-type breakdown via the same dedup key). System validates that both connections share the same `source_instance_id` for dedup key alignment
 
 ### UC-002 Incremental Sync Run
 
