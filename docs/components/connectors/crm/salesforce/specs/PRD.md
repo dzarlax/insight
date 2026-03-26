@@ -686,15 +686,15 @@ All open questions from the connector specification (`salesforce.md`) have been 
 
 ## 14. Non-Applicable Requirements
 
-The following checklist domains have been evaluated and determined not applicable for this connector:
+The following domains have been evaluated. Domains marked **N/A** have no applicable requirements for this connector. Domains marked **Applicable — delegated** have real requirements that are satisfied by the platform or destination operator rather than by the connector itself.
 
-| Domain | Reason |
-|--------|--------|
-| **Security (SEC)** | The connector handles OAuth tokens or username/password credentials, stored as `airbyte_secret` by the Airbyte framework. No custom authentication, authorization, or encryption logic exists in the connector. Credential storage and secret management are delegated to the Airbyte platform. |
-| **Safety (SAFE)** | Pure data extraction pipeline. No interaction with physical systems, no potential for harm to people, property, or environment. |
-| **Performance (PERF)** | Batch connector with native SOQL pagination (`queryMore`). No caching, pooling, or latency optimization needed. API call limit handling is the only performance concern, covered in FR `cpt-insightspec-fr-sf-api-limits`. |
-| **Reliability (REL)** | Idempotent extraction via deduplication keys (Salesforce 18-char IDs). No distributed state, no transactions. Recovery is handled by re-running the sync (Airbyte framework manages state). |
-| **Usability (UX)** | No user-facing interface. Configuration is a credential form and object scope selection in the Airbyte UI. No accessibility, internationalization, or inclusivity requirements apply. |
-| **Compliance (COMPL)** | Salesforce user emails and contact emails are personal data under GDPR. Retention, deletion, and data subject rights are delegated to the Airbyte platform and destination operator. The connector must not store credentials outside the platform's secret management. |
-| **Maintainability (MAINT)** | Initial implementation uses a hybrid approach: Declarative YAML for standard entity streams, with custom Python components (Record Extractor or Python CDK) for custom field unnest. Schema changes to standard streams are handled by updating field definitions in the manifest. Custom field collection uses the key-value pattern which is inherently extensible without manifest changes. |
-| **Testing (TEST)** | Connector behavior must satisfy PRD acceptance criteria (Section 9). Validation includes: Airbyte framework connection check, schema validation, and connector-specific acceptance tests. No custom unit tests required — the declarative manifest is validated by the framework. |
+| Domain | Status | Notes |
+|--------|--------|-------|
+| **Security (SEC)** | Applicable — delegated | The connector handles OAuth tokens and username/password credentials. These **MUST** be stored using the platform's secret management (`airbyte_secret`); the connector **MUST NOT** log or persist credentials outside the platform. Credential storage, rotation, and access control are delegated to the Airbyte platform operator. |
+| **Safety (SAFE)** | N/A | Pure data extraction pipeline. No interaction with physical systems, no potential for harm to people, property, or environment. |
+| **Performance (PERF)** | N/A | Batch connector with native SOQL pagination (`queryMore`). No caching, pooling, or latency optimization needed. API call limit handling is the only performance concern, covered in FR `cpt-insightspec-fr-sf-api-limits`. |
+| **Reliability (REL)** | N/A | Idempotent extraction via deduplication keys (Salesforce 18-char IDs). No distributed state, no transactions. Recovery is handled by re-running the sync (Airbyte framework manages state). |
+| **Usability (UX)** | N/A | No user-facing interface. Configuration is a credential form and object scope selection in the Airbyte UI. No accessibility, internationalization, or inclusivity requirements apply. |
+| **Compliance (COMPL)** | Applicable — delegated | Salesforce user emails (`salesforce_users.email`) and contact emails (`salesforce_contacts.email`) are personal data under GDPR and equivalent regulations. Retention schedules, deletion workflows, and data subject access requests are delegated to the Airbyte platform and destination operator. The connector **MUST NOT** store personal data outside the configured destination. |
+| **Maintainability (MAINT)** | N/A | Initial implementation uses a hybrid approach: Declarative YAML for standard entity streams, with custom Python components for custom field unnest. Custom field collection uses the key-value pattern which is inherently extensible without manifest changes. |
+| **Testing (TEST)** | N/A | Connector behavior must satisfy PRD acceptance criteria (Section 9). Validation includes: Airbyte framework connection check, schema validation, and connector-specific acceptance tests. |
