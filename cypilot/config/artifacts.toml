@@ -114,6 +114,16 @@ path = "docs/components/connectors/hr-directory/bamboohr/specs/DESIGN.md"
 name = "BambooHR Connector Design"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/crm/salesforce/specs/PRD.md"
+name = "Salesforce Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/crm/salesforce/specs/DESIGN.md"
+name = "Salesforce Connector Design"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/connectors/hr-directory/workday.md"
 name = "Workday Connector Specification"
@@ -142,6 +152,16 @@ name = "Microsoft 365 Connector PRD"
 kind = "DESIGN"
 path = "docs/components/connectors/collaboration/m365/specs/DESIGN.md"
 name = "Microsoft 365 Connector Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/collaboration/zoom/specs/PRD.md"
+name = "Zoom Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/collaboration/zoom/specs/DESIGN.md"
+name = "Zoom Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -182,6 +202,16 @@ name = "Outline Connector Specification"
 kind = "DESIGN"
 path = "docs/components/connectors/ai-dev/cursor.md"
 name = "Cursor Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/ai-dev/cursor/specs/PRD.md"
+name = "Cursor Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/ai-dev/cursor/specs/DESIGN.md"
+name = "Cursor Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -240,11 +270,6 @@ name = "HubSpot Connector Specification"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/crm/salesforce.md"
-name = "Salesforce Connector Specification"
-
-[[systems.artifacts]]
-kind = "DESIGN"
 path = "docs/components/connectors/allure.md"
 name = "Allure TestOps Connector Specification"
 
@@ -262,6 +287,16 @@ name = "Connector Framework Design"
 kind = "ADR"
 path = "docs/domain/connector/specs/ADR/0001-connector-integration-protocol.md"
 name = "ADR-0001: Connector-to-System Integration Protocol"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0002-connector-responsibility-scope.md"
+name = "ADR-0002: Connector Responsibility Scope"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0003-connector-message-protocol.md"
+name = "ADR-0003: Connector Message Protocol"
 
 [[systems.artifacts]]
 kind = "DECOMPOSITION"
