@@ -348,6 +348,12 @@ path = "docs/domain/airbyte-connector/specs/DESIGN.md"
 name = "Airbyte Connector Development Guide"
 traceability = "DOCS-ONLY"
 
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/specs/PRD.md"
+name = "Insight Backend PRD"
+traceability = "DOCS-ONLY"
+
 [[systems]]
 name = "Orchestrator"
 slug = "orch"
