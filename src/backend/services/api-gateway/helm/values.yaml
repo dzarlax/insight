@@ -1,0 +1,67 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/cyberantonz/insight-api-gateway
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  host: insight.example.com
+  tls:
+    enabled: false
+    secretName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# OIDC configuration (required for production)
+oidc:
+  issuerUrl: ""           # e.g., https://dev-12345.okta.com/oauth2/default
+  audience: ""            # e.g., api://insight
+  # jwksUrl: ""           # Override if JWKS URL differs from {issuer}/v1/keys
+
+# Set to true to disable authentication (local development only)
+authDisabled: false
+
+# API Gateway settings
+gateway:
+  prefixPath: "/api/v1"
+  corsEnabled: true
+  rateLimit:
+    rps: 100
+    burst: 50
+    inFlight: 32
+
+# Health probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# HPA (disabled by default)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80

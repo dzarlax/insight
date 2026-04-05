@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "libs/insight-clickhouse",
+    "plugins/oidc-authn-plugin",
+    "services/api-gateway",
 ]
 resolver = "3"
 
@@ -28,6 +30,7 @@ clickhouse = { version = "0.14", features = ["uuid"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde-saphyr = "0.0.16"
 
 # Error handling
 thiserror = "2.0"
@@ -35,6 +38,8 @@ anyhow = "1.0"
 
 # Async runtime
 tokio = { version = "1.47", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
 
 # IDs and time
 uuid = { version = "1.19", features = ["serde", "v7"] }
@@ -42,3 +47,40 @@ time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 
 # Logging
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Security
+secrecy = { version = "0.10", features = ["serde"] }
+
+# HTTP
+reqwest = { version = "0.13", features = ["json"] }
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Config
+figment = { version = "0.10", features = ["yaml", "env"] }
+
+# cyberfabric-core libs (path deps — relative to workspace root)
+modkit = { package = "cf-modkit", path = "../../../cyberfabric-core/libs/modkit" }
+modkit-auth = { package = "cf-modkit-auth", path = "../../../cyberfabric-core/libs/modkit-auth" }
+modkit-http = { package = "cf-modkit-http", path = "../../../cyberfabric-core/libs/modkit-http" }
+modkit-security = { package = "cf-modkit-security", path = "../../../cyberfabric-core/libs/modkit-security" }
+modkit-macros = { package = "cf-modkit-macros", path = "../../../cyberfabric-core/libs/modkit-macros" }
+modkit-errors = { package = "cf-modkit-errors", path = "../../../cyberfabric-core/libs/modkit-errors" }
+
+# cyberfabric-core system module SDKs
+authn-resolver-sdk = { package = "cf-authn-resolver-sdk", path = "../../../cyberfabric-core/modules/system/authn-resolver/authn-resolver-sdk" }
+authz-resolver-sdk = { package = "cf-authz-resolver-sdk", path = "../../../cyberfabric-core/modules/system/authz-resolver/authz-resolver-sdk" }
+types-registry-sdk = { package = "cf-types-registry-sdk", path = "../../../cyberfabric-core/modules/system/types-registry/types-registry-sdk" }
+
+# cyberfabric-core system modules (for server binary)
+api-gateway-module = { package = "cf-api-gateway", path = "../../../cyberfabric-core/modules/system/api-gateway" }
+authn-resolver = { package = "cf-authn-resolver", path = "../../../cyberfabric-core/modules/system/authn-resolver/authn-resolver" }
+authz-resolver = { package = "cf-authz-resolver", path = "../../../cyberfabric-core/modules/system/authz-resolver/authz-resolver" }
+tenant-resolver = { package = "cf-tenant-resolver", path = "../../../cyberfabric-core/modules/system/tenant-resolver/tenant-resolver" }
+static-authz-plugin = { package = "cf-static-authz-plugin", path = "../../../cyberfabric-core/modules/system/authz-resolver/plugins/static-authz-plugin" }
+single-tenant-tr-plugin = { package = "cf-single-tenant-tr-plugin", path = "../../../cyberfabric-core/modules/system/tenant-resolver/plugins/single-tenant-tr-plugin" }
+grpc-hub = { package = "cf-grpc-hub", path = "../../../cyberfabric-core/modules/system/grpc-hub" }
+module-orchestrator = { package = "cf-module-orchestrator", path = "../../../cyberfabric-core/modules/system/module-orchestrator" }
+types-registry = { package = "cf-types-registry", path = "../../../cyberfabric-core/modules/system/types-registry/types-registry" }

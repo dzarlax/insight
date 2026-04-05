@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api-gateway
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: api-gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - run
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: APP__modules__api-gateway__config__bind_addr
+              value: "0.0.0.0:{{ .Values.service.port }}"
+            - name: APP__modules__api-gateway__config__auth_disabled
+              value: "{{ .Values.authDisabled }}"
+            - name: APP__modules__api-gateway__config__prefix_path
+              value: "{{ .Values.gateway.prefixPath }}"
+            - name: APP__modules__api-gateway__config__cors_enabled
+              value: "{{ .Values.gateway.corsEnabled }}"
+            {{- if not .Values.authDisabled }}
+            - name: APP__modules__oidc-authn-plugin__config__issuer_url
+              value: "{{ .Values.oidc.issuerUrl }}"
+            - name: APP__modules__oidc-authn-plugin__config__audience
+              value: "{{ .Values.oidc.audience }}"
+            {{- if .Values.oidc.jwksUrl }}
+            - name: APP__modules__oidc-authn-plugin__config__jwks_url
+              value: "{{ .Values.oidc.jwksUrl }}"
+            {{- end }}
+            {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
