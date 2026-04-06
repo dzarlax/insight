@@ -27,6 +27,7 @@ use oidc_authn_plugin as _;
 use single_tenant_tr_plugin as _;
 use static_authz_plugin as _;
 use tenant_resolver as _;
+use types as _;
 use types_registry as _;
 
 use std::path::PathBuf;

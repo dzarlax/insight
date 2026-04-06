@@ -82,7 +82,7 @@ impl Module for OidcAuthnPlugin {
 
         // Generate plugin instance ID
         let instance_id = AuthNResolverPluginSpecV1::gts_make_instance_id(
-            "insight.oidc_authn_resolver.plugin.v1",
+            "insight.core.oidc_authn_resolver.plugin.v1",
         );
 
         // Register plugin instance in types-registry

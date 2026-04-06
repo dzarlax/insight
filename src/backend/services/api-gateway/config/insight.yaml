@@ -4,7 +4,7 @@
 # Example: APP__modules__oidc-authn-plugin__config__issuer_url=https://dev-123.okta.com/oauth2/default
 
 server:
-  home_dir: "~/.insight"
+  home_dir: "/app/data"
 
 logging:
   default:

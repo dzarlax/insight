@@ -21,8 +21,8 @@ spec:
         - name: api-gateway
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args:
-            - run
+          command: ["/app/insight-api-gateway"]
+          args: ["-c", "/app/config/insight.yaml", "run"]
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
