@@ -617,6 +617,8 @@ dependencies = [
 [[package]]
 name = "cf-api-gateway"
 version = "0.1.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15ed06b5ebda058b4554ae2f239acf5f307e3aa6d76b80f7ca6329f831cb7cb1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -655,6 +657,8 @@ dependencies = [
 [[package]]
 name = "cf-authn-resolver"
 version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0468531f492019f9595d3ffa6caf44994530ad21bd99253b1323d469ab6ff555"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -675,6 +679,8 @@ dependencies = [
 [[package]]
 name = "cf-authn-resolver-sdk"
 version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b5eb6ed76eec6c1a895fd7458982861fa6cd7a36ca02d84299aaf09def667cd"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -692,6 +698,8 @@ dependencies = [
 [[package]]
 name = "cf-authz-resolver"
 version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521e75a3361498445bd31e458bf9bc19afedf7d626e411f7a379010727701828"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -711,7 +719,9 @@ dependencies = [
 
 [[package]]
 name = "cf-authz-resolver-sdk"
-version = "0.2.16"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "172fec6d092b8472dc6af5c942d8690b4b9b6d4abdb856cb2bb626ae3e29f726"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -730,6 +740,8 @@ dependencies = [
 [[package]]
 name = "cf-grpc-hub"
 version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9299804198999d44aa5951a3cea45ce67c349a77d54c3b39564173fb19b1a34"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -751,7 +763,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6ecd43f8f1b12998d606590d0079ff1058b1bbb8643fd44ff789b53daac0357"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -807,6 +821,8 @@ dependencies = [
 [[package]]
 name = "cf-modkit-auth"
 version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "737fea6cd64551bf5ad37947a44b3df1209aecb7c8340e9c254c9dd19abe9f56"
 dependencies = [
  "aliri_clock",
  "aliri_tokens",
@@ -833,7 +849,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-db"
-version = "0.6.1"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86e6a22d08a9b4eb2af68a5b407c6f350e71460c6f307f6340ddd38d2dac1e10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -863,7 +881,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-db-macros"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d60f5a2fb4f50cb38fd0dc0d7ef9933a9f0823a19687b044af6d6c2dd70b3d9b"
 dependencies = [
  "heck 0.5.0",
  "proc-macro-error2",
@@ -874,7 +894,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-errors"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b02d4c8a5551afe3a667da6d120c25a17f4eb6be96777f81baf01b96cf81e86f"
 dependencies = [
  "axum",
  "http",
@@ -885,7 +907,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-errors-macro"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "813778b1953e90063a62ed0d17f9f9da5cb85f3156a2ba870e42e69fbf1df7f6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -896,7 +920,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-http"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d200cc3825929770476fb33940cab971c73429a8a8571491235965f63971fcaf"
 dependencies = [
  "bytes",
  "http",
@@ -923,7 +949,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-macros"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e793c53aaab524fef22443b6e2568d6ba7aee892acabf85451decf517899025"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -934,7 +962,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-odata"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67e82c56a885ac7f037a4adb43eb86b01068cb2ea525eeb3e360d16c28ac8be3"
 dependencies = [
  "base64",
  "bigdecimal",
@@ -954,7 +984,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-sdk"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cd3c02b75954a0eba2b786bf5646ce468322cbe8cf56c355e2bccb8669af14a"
 dependencies = [
  "cf-modkit-odata",
  "cf-modkit-security",
@@ -964,7 +996,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-security"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b69bda45f063297919e7f24206e3e94f4632d358b4012dbc95e015c61206b4f"
 dependencies = [
  "anyhow",
  "postcard",
@@ -976,7 +1010,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-transport-grpc"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d40fd7b83fa848c17b69c0c332d0c3b95587cb15ba9835086922c09bb2a0834"
 dependencies = [
  "anyhow",
  "cf-modkit-security",
@@ -990,7 +1026,9 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-utils"
-version = "0.6.1"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b21c86ec54211d7a09f8d52540bd00c4258e385a33a5f197e32f6ea347bd86db"
 dependencies = [
  "humantime",
  "regex",
@@ -1002,6 +1040,8 @@ dependencies = [
 [[package]]
 name = "cf-module-orchestrator"
 version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3645464fe6cec8820e777fe2551c8c0659f9d6feb3ec4b975b75afdcd34dcb02"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1023,6 +1063,8 @@ dependencies = [
 [[package]]
 name = "cf-single-tenant-tr-plugin"
 version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59e9642abc79d4f49bfaff822d8e0160b772e21815316bfad3042f145d3494e6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1042,6 +1084,8 @@ dependencies = [
 [[package]]
 name = "cf-static-authz-plugin"
 version = "0.1.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3838f096cd4126106015f0073080228a51b157a64712d661f13ee0287849c463"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1059,7 +1103,9 @@ dependencies = [
 
 [[package]]
 name = "cf-system-sdk-directory"
-version = "0.1.32"
+version = "0.1.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb9bee9187c5d9901524566aea24533c75c8c1f1e6e83194099cd44dd89a2d8a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1073,7 +1119,9 @@ dependencies = [
 
 [[package]]
 name = "cf-system-sdks"
-version = "0.1.32"
+version = "0.1.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a354b73fca5d813440a738baccd8b23f0d5f9d429588798904a53cab68fe0673"
 dependencies = [
  "cf-system-sdk-directory",
 ]
@@ -1081,6 +1129,8 @@ dependencies = [
 [[package]]
 name = "cf-tenant-resolver"
 version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49c3be5470d5e662d3bb22f73a88ab711a15dddbaf120a95886cc0b8c81662cd"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1101,7 +1151,9 @@ dependencies = [
 
 [[package]]
 name = "cf-tenant-resolver-sdk"
-version = "0.2.15"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf5db767d729ce7ae0012328df0f1c008003b9669d67fcbaa96b18a04d5176dd"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1119,6 +1171,8 @@ dependencies = [
 [[package]]
 name = "cf-types-registry"
 version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed9d1c059c73bc844c779573f4f2c38183436218619c0fb716880b576611a73d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1141,6 +1195,8 @@ dependencies = [
 [[package]]
 name = "cf-types-registry-sdk"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f66f08e07de8531821ab86b1d796861fe9befa6a63878aef2f0399e05f25e23"
 dependencies = [
  "async-trait",
  "gts",
@@ -2479,11 +2535,15 @@ name = "insight-api-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "axum",
  "cf-api-gateway",
  "cf-authn-resolver",
  "cf-authz-resolver",
  "cf-grpc-hub",
  "cf-modkit",
+ "cf-modkit-macros",
+ "cf-modkit-security",
  "cf-module-orchestrator",
  "cf-single-tenant-tr-plugin",
  "cf-static-authz-plugin",
@@ -2491,6 +2551,8 @@ dependencies = [
  "cf-types-registry",
  "clap",
  "oidc-authn-plugin",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

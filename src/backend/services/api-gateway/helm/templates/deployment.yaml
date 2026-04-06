@@ -27,30 +27,14 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-          env:
-            - name: APP__modules__api-gateway__config__bind_addr
-              value: "0.0.0.0:{{ .Values.service.port }}"
-            - name: APP__modules__api-gateway__config__auth_disabled
-              value: "{{ .Values.authDisabled }}"
-            - name: APP__modules__api-gateway__config__prefix_path
-              value: "{{ .Values.gateway.prefixPath }}"
-            - name: APP__modules__api-gateway__config__cors_enabled
-              value: "{{ .Values.gateway.corsEnabled }}"
+          envFrom:
+            # Non-sensitive config (bind addr, prefix, cors, auth_disabled)
+            - configMapRef:
+                name: {{ .Release.Name }}-api-gateway-config
             {{- if not .Values.authDisabled }}
-            - name: APP__modules__oidc-authn-plugin__config__issuer_url
-              value: "{{ .Values.oidc.issuerUrl }}"
-            - name: APP__modules__oidc-authn-plugin__config__audience
-              value: "{{ .Values.oidc.audience }}"
-            {{- if .Values.oidc.jwksUrl }}
-            - name: APP__modules__oidc-authn-plugin__config__jwks_url
-              value: "{{ .Values.oidc.jwksUrl }}"
-            {{- end }}
-            - name: APP__modules__auth-info__config__issuer_url
-              value: "{{ .Values.oidc.issuerUrl }}"
-            - name: APP__modules__auth-info__config__client_id
-              value: "{{ .Values.oidc.clientId }}"
-            - name: APP__modules__auth-info__config__redirect_uri
-              value: "{{ .Values.oidc.redirectUri }}"
+            # OIDC config (Secret or SealedSecret)
+            - secretRef:
+                name: {{ .Release.Name }}-api-gateway-oidc
             {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
