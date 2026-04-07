@@ -586,7 +586,7 @@ All timestamps persisted in the Bronze layer **MUST** be stored in UTC (ISO 8601
 
 ### 13.1 Phase 1 Scope
 
-Phase 1 targets **Jira Cloud only**. Server/Data Center support is deferred to a future iteration.
+Functional requirements, use cases, and acceptance criteria above describe the **full target scope** of the Jira connector (Cloud + Server/Data Center). Phase 1 implements the subset below. Server/Data Center support is deferred to a future iteration.
 
 | Capability | Phase 1 | Future |
 |------------|---------|--------|

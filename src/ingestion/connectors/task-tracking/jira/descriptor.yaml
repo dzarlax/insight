@@ -9,23 +9,23 @@ silver_targets:
 streams:
   - name: jira_issue
     bronze_table: jira_issue
-    primary_key: [source_instance_id, id_readable]
+    primary_key: [tenant_id, source_instance_id, id_readable]
     cursor_field: updated
   - name: jira_issue_history
     bronze_table: jira_issue_history
-    primary_key: [source_instance_id, changelog_id]
+    primary_key: [tenant_id, source_instance_id, changelog_id]
   - name: jira_comments
     bronze_table: jira_comments
-    primary_key: [source_instance_id, comment_id]
+    primary_key: [tenant_id, source_instance_id, comment_id]
   - name: jira_worklogs
     bronze_table: jira_worklogs
-    primary_key: [source_instance_id, worklog_id]
+    primary_key: [tenant_id, source_instance_id, worklog_id]
   - name: jira_projects
     bronze_table: jira_projects
-    primary_key: [source_instance_id, project_id]
+    primary_key: [tenant_id, source_instance_id, project_id]
   - name: jira_sprints
     bronze_table: jira_sprints
-    primary_key: [source_instance_id, sprint_id]
+    primary_key: [tenant_id, source_instance_id, sprint_id]
   - name: jira_user
     bronze_table: jira_user
-    primary_key: [source_instance_id, account_id]
+    primary_key: [tenant_id, source_instance_id, account_id]

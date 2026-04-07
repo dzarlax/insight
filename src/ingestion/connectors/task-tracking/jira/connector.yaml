@@ -345,25 +345,29 @@ streams:
         path: /rest/api/3/search/jql
         request_parameters:
           jql: >-
-            project IN ({{ config['project_keys'] }}) AND updated >= "{{ stream_slice.start_time }}" ORDER BY updated ASC
+            project IN ({{ config['project_keys'] }}) AND updated >= "{{ stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time }}" ORDER BY updated ASC
           maxResults: "{{ config.get('page_size', 50) }}"
           expand: names
           fields: "*all"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: updated
-      datetime_format: "%Y-%m-%d"
-      cursor_granularity: P1D
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%f%z"
+        - "%Y-%m-%d %H:%M"
+        - "%Y-%m-%d"
+      datetime_format: "%Y-%m-%d %H:%M"
+      cursor_granularity: PT1M
       start_datetime:
         type: MinMaxDatetime
-        datetime: "2026-01-01"
+        datetime: "{{ config.get('start_date', '2020-01-01') }}"
         datetime_format: "%Y-%m-%d"
       end_datetime:
         type: MinMaxDatetime
-        datetime: "{{ now_utc().strftime('%Y-%m-%d') }}"
-        datetime_format: "%Y-%m-%d"
+        datetime: "{{ now_utc().strftime('%Y-%m-%d %H:%M') }}"
+        datetime_format: "%Y-%m-%d %H:%M"
       step: P30D
-      lookback_window: P1D
+      lookback_window: PT1H
     transformations:
       - $ref: "#/definitions/add_fields"
       - type: AddFields
@@ -385,7 +389,7 @@ streams:
           - path: [created]
             value: "{{ record.get('fields', {}).get('created') }}"
           - path: [updated]
-            value: "{{ record.get('fields', {}).get('updated', '')[:10] }}"
+            value: "{{ record.get('fields', {}).get('updated') }}"
           - path: [custom_fields_json]
             value: "{{ record.get('fields', {}) | tojson }}"
     schema_loader:
@@ -626,12 +630,18 @@ spec:
         title: Project Keys
         description: "Comma-separated project keys to sync (e.g., TC,TNG). Required — Jira Cloud does not allow unbounded queries."
         order: 5
+      start_date:
+        type: string
+        title: Start Date
+        description: "Earliest date to sync issues from (YYYY-MM-DD). Default: 2020-01-01"
+        default: "2020-01-01"
+        order: 6
       page_size:
         type: integer
         title: Page Size
         description: "Page size for JQL search (default 50, max 100)"
         default: 50
-        order: 6
+        order: 7
     additionalProperties: true
 
 concurrency_level:

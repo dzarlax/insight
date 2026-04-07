@@ -85,7 +85,7 @@ Every emitted record includes `tenant_id` and `source_instance_id` for multi-ten
 
 ### 1.3 Architecture Layers
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Orchestrator / Scheduler (Kestra / Airbyte)                        │
 │  (triggers Jira connector sync)                                     │
@@ -398,6 +398,7 @@ In Phase 1, Atlassian Document Format (ADF) JSON from Jira Cloud REST API v3 com
 | `tenant_id` | str | Insight tenant identifier — injected into every record |
 | `source_instance_id` | str | Instance discriminator (e.g., `jira-team-alpha`) |
 | `project_keys` | str | **Required.** Comma-separated project keys — Jira Cloud does not allow unbounded JQL queries |
+| `start_date` | str | Earliest date to sync issues from, `YYYY-MM-DD` (default `2020-01-01`) |
 | `page_size` | int | Page size for JQL search (default 50, max 100) |
 
 ---
@@ -580,7 +581,7 @@ All tables use `ReplacingMergeTree(_version)` with `_version = toUnixTimestamp64
 
 **JQL for Incremental Sync**:
 
-```
+```sql
 project IN ({project_keys}) AND updated >= "{last_cursor}" ORDER BY updated ASC
 ```
 
@@ -682,7 +683,7 @@ These mappings are expressed as DPath extractors and `AddFields` transformations
 
 **Resolution chain** (Silver step 2, not in this connector):
 
-```
+```text
 jira_issue_history.author_account_id
   → jira_user.account_id
     → jira_user.email (when available)
@@ -705,7 +706,7 @@ Same chain applies to `jira_worklogs.author_account_id`, `jira_comments.author_a
 | No reconciliation mode | Hard-deleted entities in Jira are not detected by incremental sync | Periodic full reconciliation mode in a future iteration |
 | No adaptive throttling | `ConcurrencyLevel` is static — does not adjust based on 429 response rate | Adaptive throttling requires CDK Python (`ThrottledFanOut` pattern) |
 | SubstreamPartitionRouter can only pass one parent key | `issue_jira_id`, `board_name`, `project_key` not available on substreams at Bronze level | Resolved via JOINs in Silver/dbt; CDK migration would allow passing arbitrary parent fields |
-| Cursor datetime format is date-only | `%Y-%m-%d` — Jira JQL does not accept ISO timestamps with microseconds; full ISO timestamps from API truncated to date | `%Y-%m-%dT%H:%M` format if finer granularity needed |
+| Cursor datetime format is minute-precision | `%Y-%m-%d %H:%M` — Jira JQL accepts `yyyy-MM-dd` and `yyyy-MM-dd HH:mm` only (no seconds, no ISO); full ISO timestamps preserved in Bronze `updated` field | Second-level precision if Jira JQL adds support |
 | Connector Builder UI testing limits | Substream testing limited to first 5 parent partitions and 5 pages each; full sync required for complete validation | N/A — Airbyte platform limitation |
 | `jira_issue_ext` and `jira_issue_links` not separate tables | All custom fields and issue links stored in `custom_fields_json` on `jira_issue`; denormalized in Silver/dbt | Separate streams if declarative manifest adds nested array flattening, or CDK migration |
 | `jira_collection_runs` not implemented | Sync monitoring handled by Airbyte platform sync logs; no connector-level run tracking table | Custom run tracking if needed beyond Airbyte platform capabilities |
@@ -715,13 +716,14 @@ Same chain applies to `jira_worklogs.author_account_id`, `jira_comments.author_a
 
 ### Incremental Sync Cursor and Datetime Format
 
-Jira JQL only accepts dates in `yyyy-MM-dd` or `yyyy-MM-dd HH:mm` format. The Jira API returns `updated` timestamps in full ISO format (e.g., `2026-04-04T11:38:37.225+0300`). The connector handles this mismatch as follows:
+Jira JQL only accepts dates in `yyyy-MM-dd` or `yyyy-MM-dd HH:mm` format. The Jira API returns `updated` timestamps in full ISO format (e.g., `2026-04-04T11:38:37.225+0300`). The connector handles this mismatch using Airbyte's `cursor_datetime_formats` (input) and `datetime_format` (output) separation:
 
-1. **Cursor storage**: `updated` field truncated to `%Y-%m-%d` (date-only) via `record.get('fields', {}).get('updated', '')[:10]`
-2. **JQL query**: `updated >= "2026-04-04"` — compatible with Jira JQL parser
-3. **`cursor_granularity`**: `P1D` (one day) — matches the date-only format
-4. **`lookback_window`**: `P1D` — overlaps by one day to catch issues updated during the previous sync's time window; deduplication handled by `ReplacingMergeTree(_version)` at storage level
-5. **`start_datetime`**: should be configured per customer data range (default: `2026-01-01`)
+1. **Bronze `updated` field**: stores the **full ISO timestamp** from Jira without truncation — no data loss
+2. **`cursor_datetime_formats`**: parses the ISO timestamp from records (`%Y-%m-%dT%H:%M:%S.%f%z`, `%Y-%m-%d %H:%M`, `%Y-%m-%d`)
+3. **`datetime_format`**: formats cursor for JQL as `%Y-%m-%d %H:%M` — compatible with Jira JQL parser (minute precision)
+4. **`cursor_granularity`**: `PT1M` (one minute) — matches the JQL output format
+5. **`lookback_window`**: `PT1H` — overlaps by one hour to catch edge cases; deduplication handled by `ReplacingMergeTree(_version)` at storage level
+6. **`start_datetime`**: configurable via `start_date` config field (default: `2020-01-01`)
 
 ---
 
