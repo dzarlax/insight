@@ -70,11 +70,13 @@ Populated from `GET /spaces` (paginated).
 | `description` | String | `spaces[].description.plain.value` | Plain text description |
 | `space_type` | String | `spaces[].type` | `global` / `personal` |
 | `status` | String | `spaces[].status` | `current` (→ `active`) / `archived` |
-| `created_at` | DateTime64(3) | Not available in v2 | NULL — v2 `/spaces` does not return `createdAt` |
+| `created_at` | DateTime64(3) | `spaces[].createdAt` | ISO 8601 UTC timestamp — confirmed available in v2 via live API testing |
 | `url` | String | `spaces[]._links.webui` | Web URL of space |
 | `collected_at` | DateTime64(3) | collection time | |
 | `data_source` | String | `insight_confluence` | |
 | `_version` | UInt64 | ms timestamp | |
+
+> **Additional fields available in v2 `/spaces` response** (discovered via live API testing): `spaceOwnerId`, `homepageId`, `authorId`, `currentActiveAlias`, `icon`. These fields are not mapped to the unified schema in the current version but may be useful for future enrichment (e.g., space ownership tracking, homepage linking).
 
 ---
 
