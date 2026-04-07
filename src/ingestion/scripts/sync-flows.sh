@@ -1,49 +1,100 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
-KESTRA_URL="${KESTRA_URL:-http://localhost:8085}"
-FLOWS_DIR="./flows"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
-upload_flow() {
-  local flow_file="$1"
-  local response
-  response=$(curl -sf -X POST "${KESTRA_URL}/api/v1/flows/import" \
-    -F "fileUpload=@${flow_file}" 2>&1) || {
-    echo "  ERROR uploading ${flow_file}: ${response}"
-    return 1
-  }
-  echo "  OK: ${flow_file}"
+# KUBECONFIG can be empty when running in-cluster
+
+WORKFLOWS_DIR="./workflows"
+CONNECTORS_DIR="./connectors"
+CONNECTIONS_DIR="./connections"
+
+# Always apply shared WorkflowTemplates first
+echo "  Applying WorkflowTemplates..."
+kubectl apply -f "${WORKFLOWS_DIR}/templates/"
+
+# --- Get connection_id from per-tenant state ---
+get_connection_id() {
+  local tenant="$1" connector="$2"
+  local state_file="${CONNECTIONS_DIR}/.state/${tenant}.yaml"
+  [[ -f "$state_file" ]] || return 1
+  python3 -c "
+import yaml, sys
+state = yaml.safe_load(open('$state_file')) or {}
+conns = state.get('tenants', {}).get('$tenant', {}).get('connections', {})
+# Exact match first
+if '$connector' in conns:
+    print(conns['$connector'])
+    sys.exit(0)
+# Prefix match: m365 → m365-m365-main
+for k, v in conns.items():
+    if k.startswith('$connector' + '-'):
+        print(v)
+        sys.exit(0)
+sys.exit(1)
+" 2>/dev/null
 }
 
+# --- Generate and apply CronWorkflows for a tenant ---
 sync_tenant() {
   local tenant="$1"
-  local tenant_dir="${FLOWS_DIR}/${tenant}"
+  local tenant_dir="${WORKFLOWS_DIR}/${tenant}"
+  mkdir -p "$tenant_dir"
 
-  if [[ ! -d "$tenant_dir" ]]; then
-    echo "  SKIP: no flows directory for tenant ${tenant}"
-    return 0
-  fi
+  # Iterate over all connectors with descriptor.yaml
+  for descriptor in "${CONNECTORS_DIR}"/*/*/descriptor.yaml; do
+    [[ -f "$descriptor" ]] || continue
 
-  for flow_file in "${tenant_dir}"/*.yml; do
-    [[ -f "$flow_file" ]] || continue
-    upload_flow "$flow_file"
+    local connector schedule dbt_select workflow
+    connector=$(yq -r '.name' "$descriptor")
+    schedule=$(yq -r '.schedule' "$descriptor" 2>/dev/null | grep -v null || echo "0 2 * * *")
+    dbt_select=$(yq -r '.dbt_select' "$descriptor" 2>/dev/null | grep -v null || echo "+tag:silver")
+    workflow=$(yq -r '.workflow' "$descriptor" 2>/dev/null | grep -v null || echo "sync")
+
+    # Find the workflow template
+    local tpl="${WORKFLOWS_DIR}/schedules/${workflow}.yaml.tpl"
+    if [[ ! -f "$tpl" ]]; then
+      echo "  SKIP: no template ${tpl} for connector ${connector}"
+      continue
+    fi
+
+    # Get connection_id from state
+    local connection_id
+    connection_id=$(get_connection_id "$tenant" "$connector") || true
+    if [[ -z "$connection_id" ]]; then
+      echo "  SKIP: no connection_id for ${connector} tenant ${tenant}"
+      continue
+    fi
+
+    # Generate CronWorkflow
+    local output="${tenant_dir}/${connector}-sync.yaml"
+    CONNECTOR="$connector" \
+    TENANT_ID="$tenant" \
+    CONNECTION_ID="$connection_id" \
+    SCHEDULE="$schedule" \
+    DBT_SELECT="$dbt_select" \
+      envsubst < "$tpl" > "$output"
+
+    echo "  Generated: ${output}"
   done
+
+  # Apply generated workflows
+  if ls "${tenant_dir}"/*.yaml >/dev/null 2>&1; then
+    kubectl apply -f "$tenant_dir/"
+  fi
 }
 
+# --- Main ---
 if [[ "${1:-}" == "--all" ]]; then
-  if [[ ! -d "$FLOWS_DIR" ]]; then
-    echo "  No flows directory found"
-    exit 0
-  fi
-  for tenant_dir in "${FLOWS_DIR}"/*/; do
-    [[ -d "$tenant_dir" ]] || continue
-    tenant=$(basename "$tenant_dir")
-    echo "  Syncing flows for tenant: $tenant"
+  for config in "${CONNECTIONS_DIR}"/*.yaml; do
+    [[ -f "$config" ]] || continue
+    tenant=$(basename "$config" .yaml)
+    echo "  Syncing workflows for tenant: $tenant"
     sync_tenant "$tenant"
   done
 else
   tenant="${1:?Usage: $0 <tenant_id> | --all}"
-  echo "  Syncing flows for tenant: $tenant"
+  echo "  Syncing workflows for tenant: $tenant"
   sync_tenant "$tenant"
 fi

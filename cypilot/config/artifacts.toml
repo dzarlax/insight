@@ -5,7 +5,7 @@ name = "InsightSpec"
 slug = "insightspec"
 kit = "sdlc"
 codebase = ["docs"]
-children = []
+children = ["ir", "person", "orgchart"]
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -41,11 +41,6 @@ name = "Storage Technology Evaluation"
 kind = "DESIGN"
 path = "docs/architecture/CONNECTORS_ARCHITECTURE.md"
 name = "Connectors Architecture"
-
-[[systems.artifacts]]
-kind = "DESIGN"
-path = "docs/domain/identity-resolution/specs/DESIGN.md"
-name = "Identity Resolution Service Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -102,16 +97,10 @@ kind = "DESIGN"
 path = "docs/components/connectors/hr-directory/README.md"
 name = "HR Silver Layer"
 
-
-[[systems.artifacts]]
-kind = "PRD"
-path = "docs/components/connectors/hr-directory/bamboohr/specs/PRD.md"
-name = "BambooHR Connector PRD"
-
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/hr-directory/bamboohr/specs/DESIGN.md"
-name = "BambooHR Connector Design"
+path = "docs/components/connectors/hr-directory/bamboohr.md"
+name = "BambooHR Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
@@ -175,13 +164,13 @@ name = "Slack Connector Specification"
 
 [[systems.artifacts]]
 kind = "PRD"
-path = "docs/components/connectors/collaboration/zoom/specs/PRD.md"
-name = "Zoom Connector PRD"
+path = "docs/components/connectors/collaboration/slack/specs/PRD.md"
+name = "Slack Connector PRD"
 
 [[systems.artifacts]]
 kind = "DESIGN"
-path = "docs/components/connectors/collaboration/zoom/specs/DESIGN.md"
-name = "Zoom Connector Design"
+path = "docs/components/connectors/collaboration/slack/specs/DESIGN.md"
+name = "Slack Connector Design"
 
 [[systems.artifacts]]
 kind = "DESIGN"
@@ -232,6 +221,16 @@ name = "Claude API Connector PRD"
 kind = "DESIGN"
 path = "docs/components/connectors/ai/claude-api/specs/DESIGN.md"
 name = "Claude API Connector Design"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-001-group-by-limit-inference-geo.md"
+name = "ADR-001: Drop inference_geo from group_by dimensions"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-002-api-response-structure.md"
+name = "ADR-002: API response structure — nested records and field mapping"
 
 [[systems.artifacts]]
 kind = "PRD"
@@ -289,6 +288,16 @@ path = "docs/domain/connector/specs/ADR/0001-connector-integration-protocol.md"
 name = "ADR-0001: Connector-to-System Integration Protocol"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0002-connector-responsibility-scope.md"
+name = "ADR-0002: Connector Responsibility Scope"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/connector/specs/ADR/0003-connector-message-protocol.md"
+name = "ADR-0003: Connector Message Protocol"
+
+[[systems.artifacts]]
 kind = "DECOMPOSITION"
 path = "docs/domain/ingestion/specs/DECOMPOSITION.md"
 name = "Ingestion Layer Decomposition"
@@ -309,7 +318,25 @@ traceability = "DOCS-ONLY"
 [[systems.artifacts]]
 kind = "ADR"
 path = "docs/domain/ingestion/specs/ADR/0001-kestra-over-airflow.md"
-name = "ADR-0001: Kestra over Airflow"
+name = "ADR-0001: Kestra over Airflow (superseded)"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion/specs/ADR/0002-argo-over-kestra.md"
+name = "ADR-0002: Argo Workflows over Kestra"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/ingestion/specs/ADR/0003-k8s-secrets-credentials.md"
+name = "ADR-0003: K8s Secrets as Credential Source"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/ingestion/specs/feature-k8s-secret-credentials/FEATURE.md"
+name = "K8s Secret Credential Resolution"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
@@ -341,6 +368,19 @@ kind = "DESIGN"
 path = "docs/components/backend/specs/DESIGN.md"
 name = "Backend Architecture"
 traceability = "DOCS-ONLY"
+kind = "ADR"
+path = "docs/shared/glossary/ADR/0001-uuidv7-primary-key.md"
+name = "ADR-0001: UUIDv7 as Universal Primary Key"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/shared/glossary/ADR/0002-database-field-conventions.md"
+name = "ADR-0002: Database Field Naming and Type Conventions"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/shared/glossary/ADR/0003-insight-prefixed-tenant-id.md"
+name = "ADR-0003: Use insight_tenant_id Instead of tenant_id"
 
 [[systems]]
 name = "Orchestrator"
@@ -354,3 +394,65 @@ kind = "PRD"
 path = "docs/components/orchestrator/specs/PRD.md"
 name = "Orchestrator PRD"
 traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Identity Resolution"
+slug = "ir"
+kit = "sdlc"
+codebase = ["docs/domain/identity-resolution"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/identity-resolution/specs/DESIGN.md"
+name = "Identity Resolution Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/identity-resolution/specs/PRD.md"
+name = "Identity Resolution PRD"
+
+[[systems.artifacts]]
+kind = "DECOMPOSITION"
+path = "docs/domain/identity-resolution/specs/DECOMPOSITION.md"
+name = "Identity Resolution Decomposition"
+
+
+[[systems]]
+name = "Person Domain"
+slug = "person"
+kit = "sdlc"
+codebase = ["docs/domain/person"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/person/specs/DESIGN.md"
+name = "Person Domain Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/person/specs/PRD.md"
+name = "Person Domain PRD"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/domain/person/specs/ADR/0001-shared-unmapped-table.md"
+name = "ADR-0001: Shared unmapped table for identity and person domains"
+
+[[systems]]
+name = "Org-Chart Domain"
+slug = "orgchart"
+kit = "sdlc"
+codebase = ["docs/domain/org-chart"]
+children = []
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/org-chart/specs/DESIGN.md"
+name = "Org-Chart Domain Design"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/org-chart/specs/PRD.md"
+name = "Org-Chart Domain PRD"
