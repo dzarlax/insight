@@ -1,31 +1,7 @@
 name: jira
 version: "1.0"
-type: nocode
-
-silver_targets:
-  - class_task_tracker_activities
-  - class_task_tracker_snapshot
-
-streams:
-  - name: jira_issue
-    bronze_table: jira_issue
-    primary_key: [unique_key]
-    cursor_field: updated
-  - name: jira_issue_history
-    bronze_table: jira_issue_history
-    primary_key: [unique_key]
-  - name: jira_comments
-    bronze_table: jira_comments
-    primary_key: [unique_key]
-  - name: jira_worklogs
-    bronze_table: jira_worklogs
-    primary_key: [unique_key]
-  - name: jira_projects
-    bronze_table: jira_projects
-    primary_key: [unique_key]
-  - name: jira_sprints
-    bronze_table: jira_sprints
-    primary_key: [unique_key]
-  - name: jira_user
-    bronze_table: jira_user
-    primary_key: [unique_key]
+schedule: "0 3 * * *"
+dbt_select: "tag:jira+"
+workflow: sync
+connection:
+  namespace: bronze_jira

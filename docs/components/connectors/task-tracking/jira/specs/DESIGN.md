@@ -1,8 +1,8 @@
 # DESIGN — Jira Connector
 
-> Version 1.1 — April 2026
-> Revised: switched from CDK Python to declarative YAML manifest for Phase 1
-> Based on: [PRD.md](./PRD.md), [`jira.md`](../jira.md), [Connector Framework DESIGN](../../../../domain/connector/specs/DESIGN.md), [Airbyte Connector DESIGN](../../../../domain/airbyte-connector/specs/DESIGN.md)
+> Version 1.2 — April 2026
+> Revised: aligned with upstream Connector Framework spec §4.1–§4.10 (config naming, unique_key, descriptor format)
+> Based on: [PRD.md](./PRD.md), [`jira.md`](../jira.md), [Connector Framework DESIGN](../../../../domain/connector/specs/DESIGN.md)
 
 <!-- toc -->
 
@@ -48,7 +48,7 @@ Comment body is stored as raw ADF JSON in Bronze; plain text extraction is defer
 
 Incremental collection uses the issue `updated` timestamp as the primary cursor via JQL queries. Child streams (changelog, worklogs, comments) are scoped by the parent issue set returned by the incremental query. All custom fields (including story points and issue links) are stored as raw JSON in `custom_fields_json` on `jira_issue`; story points extraction is deferred to Silver/dbt based on `jira_projects.style`. Directory streams (projects, sprints, users) are full-refresh on each run.
 
-Every emitted record includes `tenant_id` and `source_instance_id` for multi-tenant isolation and multi-instance disambiguation.
+Every emitted record includes `tenant_id` and `source_id` for multi-tenant isolation and multi-instance disambiguation.
 
 ### 1.2 Architecture Drivers
 
@@ -73,7 +73,7 @@ Every emitted record includes `tenant_id` and `source_instance_id` for multi-ten
 | `cpt-insightspec-fr-jira-deduplication` | Upsert keyed on natural PKs per table; `ReplacingMergeTree(_version)` at storage level |
 | `cpt-insightspec-fr-jira-incremental-sync` | `DatetimeBasedCursor` on issue `updated` field; JQL `updated >= "{cursor}"` for delta extraction |
 | `cpt-insightspec-fr-jira-identity-key` | Cloud-only — always `accountId` as `user_id`; extracted via DPath from user objects in each stream |
-| `cpt-insightspec-fr-jira-instance-context` | `AddFields` transformation injects `source_instance_id` and `tenant_id` on every record |
+| `cpt-insightspec-fr-jira-instance-context` | `AddFields` transformation injects `tenant_id`, `source_id`, and `unique_key` on every record (per Connector Framework spec §4.6) |
 
 #### NFR Allocation
 
@@ -115,7 +115,7 @@ Every emitted record includes `tenant_id` and `source_instance_id` for multi-ten
 |-------|---------------|------------|
 | Orchestration | Trigger, schedule, state management | Kestra / Airbyte platform |
 | Collection | REST pagination, JQL queries, cursor management, retry | Airbyte DeclarativeSource (YAML manifest) |
-| Transformation | `AddFields` for `tenant_id`, `source_instance_id` injection; DPath extraction | Declarative transformations |
+| Transformation | `AddFields` for `tenant_id`, `source_id`, `unique_key` injection (per spec §4.6); DPath extraction | Declarative transformations |
 | Storage | Upsert to Bronze tables | ClickHouse `ReplacingMergeTree(_version)` |
 
 ---
@@ -232,7 +232,7 @@ The single declarative YAML manifest (`connector.yaml`) defines all streams, aut
 - Configures `OffsetIncrement` pagination for most endpoints; `CursorPagination` for JQL search (`nextPageToken`). **Note**: `CursorPagination` does NOT accept a `page_size` parameter — page size is passed as a `request_parameter` (`maxResults`) on the stream requester.
 - Configures `DatetimeBasedCursor` on issue `updated` field for incremental sync.
 - Configures `SubstreamPartitionRouter` for changelog, comments, and worklogs (parent-child stream pattern per issue).
-- Configures `AddFields` transformations for `tenant_id` and `source_instance_id` injection on every record.
+- Configures `AddFields` transformations for `tenant_id`, `source_id`, and `unique_key` injection on every record (per Connector Framework spec §4.6).
 - Configures `ConcurrencyLevel` to control fan-out for child stream requests.
 - Defines the connection specification (config schema) in the `spec` section.
 
@@ -285,7 +285,7 @@ Translates Jira API response objects to Bronze schema fields using DPath extract
 ##### Responsibility scope
 
 - DPath extractors map Jira API JSON paths to Bronze schema field names (e.g., `fields.project.key` → `project_key`).
-- `AddFields` injects `tenant_id` and `source_instance_id` on every record.
+- `AddFields` injects `tenant_id`, `source_id`, and `unique_key` on every record.
 - All custom fields (including story points and issue links) stored as raw JSON in `custom_fields_json` on `jira_issue`; denormalization deferred to Silver/dbt.
 
 ##### Responsibility boundaries
@@ -395,8 +395,8 @@ In Phase 1, Atlassian Document Format (ADF) JSON from Jira Cloud REST API v3 com
 | `jira_instance_url` | str | Jira Cloud instance URL (e.g., `https://myorg.atlassian.net`) |
 | `jira_email` | str | User email for API token authentication |
 | `jira_api_token` | str (airbyte_secret) | Jira Cloud API token |
-| `insights_tenant_id` | str | Insight tenant identifier — injected into every record |
-| `jira_source_instance_id` | str | Instance discriminator (e.g., `jira-team-alpha`) |
+| `insight_tenant_id` | str | Insight tenant identifier — injected into every record |
+| `insight_source_id` | str | Instance discriminator (e.g., `jira-team-alpha`) |
 | `jira_project_keys` | str | **Required.** Comma-separated project keys — Jira Cloud does not allow unbounded JQL queries |
 | `jira_start_date` | str | Earliest date to sync issues from, `YYYY-MM-DD` (default `2020-01-01`) |
 | `jira_page_size` | int | Page size for JQL search (default 50, max 100) |
@@ -450,7 +450,7 @@ In Phase 1, Atlassian Document Format (ADF) JSON from Jira Cloud REST API v3 com
 |--------|-------|
 | Engine | `ReplacingMergeTree(_version)` |
 | Write pattern | Upsert keyed on natural primary keys per table |
-| Standard columns | `tenant_id`, `source_instance_id`, `_version` on all tables |
+| Standard columns | `tenant_id`, `source_id`, `unique_key`, `_version` on all tables |
 
 ---
 
@@ -490,7 +490,7 @@ sequenceDiagram
     Source ->> API: GET /rest/api/3/search/jql (updated >= cursor, expand=names, fields=*all)
     loop Until all pages exhausted
         API -->> Source: issue batch
-        Note over Source: AddFields: tenant_id, source_instance_id
+        Note over Source: AddFields: tenant_id, source_id, unique_key
         Note over Source: custom_fields_json = record.fields (incl. issuelinks)
         Source ->> Bronze: UPSERT jira_issue
 
@@ -548,15 +548,15 @@ All Bronze table schemas are defined in [`jira.md`](../jira.md). The schemas are
 
 | Table | PK (natural) | Cursor / Sync Strategy |
 |-------|-------------|------------------------|
-| `jira_issue` | `(tenant_id, source_instance_id, id_readable)` | `updated` — incremental via JQL |
-| `jira_issue_history` | `(tenant_id, source_instance_id, changelog_id)` | Child of `jira_issue` — one record per changelog entry; `items` stored as JSON array. `field_id` is inside `items` (not a top-level Bronze column). `issue_jira_id` resolved via JOIN on `id_readable` |
-| `jira_worklogs` | `(tenant_id, source_instance_id, worklog_id)` | Child of `jira_issue` — per-issue fetch via SubstreamPartitionRouter |
-| `jira_comments` | `(tenant_id, source_instance_id, comment_id)` | Child of `jira_issue` — per-issue fetch |
-| `jira_projects` | `(tenant_id, source_instance_id, project_id)` | Full refresh each run |
-| `jira_sprints` | `(tenant_id, source_instance_id, sprint_id)` | Full refresh each run. `board_name` and `project_key` removed from Bronze (resolve via JOIN with boards/projects in Silver/dbt) |
-| `jira_user` | `(tenant_id, source_instance_id, account_id)` | Full refresh each run |
+| `jira_issue` | `(tenant_id, source_id, id_readable)` | `updated` — incremental via JQL |
+| `jira_issue_history` | `(tenant_id, source_id, changelog_id)` | Child of `jira_issue` — one record per changelog entry; `items` stored as JSON array. `field_id` is inside `items` (not a top-level Bronze column). `issue_jira_id` resolved via JOIN on `id_readable` |
+| `jira_worklogs` | `(tenant_id, source_id, worklog_id)` | Child of `jira_issue` — per-issue fetch via SubstreamPartitionRouter |
+| `jira_comments` | `(tenant_id, source_id, comment_id)` | Child of `jira_issue` — per-issue fetch |
+| `jira_projects` | `(tenant_id, source_id, project_id)` | Full refresh each run |
+| `jira_sprints` | `(tenant_id, source_id, sprint_id)` | Full refresh each run. `board_name` and `project_key` removed from Bronze (resolve via JOIN with boards/projects in Silver/dbt) |
+| `jira_user` | `(tenant_id, source_id, account_id)` | Full refresh each run |
 
-All streams use `unique_key` as the primary key in the connector manifest. The `unique_key` value follows the pattern `{tenant_id}-{source_instance_id}-{natural_key}`, where `natural_key` is the stream-specific identifier (e.g., `id` for projects, `accountId` for users, `key` for issues). The composite `(tenant_id, source_instance_id, natural_key)` columns remain as the logical natural key for reference and JOINs.
+All streams use `unique_key` as the primary key in the connector manifest. The `unique_key` value follows the pattern `{tenant_id}-{source_id}-{natural_key}`, where `natural_key` is the stream-specific identifier (e.g., `id` for projects, `accountId` for users, `key` for issues). The composite `(tenant_id, source_id, natural_key)` columns remain as the logical natural key for reference and JOINs.
 
 All tables use `ReplacingMergeTree(_version)` with `_version = toUnixTimestamp64Milli(now64())` for deduplication.
 
@@ -629,7 +629,8 @@ Accept: application/json
 
 | Bronze Field | Jira API Path | Notes |
 |-------------|---------------|-------|
-| `source_instance_id` | config | Injected via `AddFields` from connector config |
+| `source_id` | config (`insight_source_id`) | Injected via `AddFields` per spec §4.6 |
+| `unique_key` | computed | `{tenant_id}-{source_id}-{natural_key}` per spec §4.6 |
 | `jira_id` | `id` | Internal numeric ID |
 | `id_readable` | `key` | Human-readable key (e.g., `PROJ-123`) |
 | `project_key` | `fields.project.key` | |
@@ -712,7 +713,7 @@ Same chain applies to `jira_worklogs.author_account_id`, `jira_comments.author_a
 | Connector Builder UI testing limits | Substream testing limited to first 5 parent partitions and 5 pages each; full sync required for complete validation | N/A — Airbyte platform limitation |
 | `jira_issue_ext` and `jira_issue_links` not separate tables | All custom fields and issue links stored in `custom_fields_json` on `jira_issue`; denormalized in Silver/dbt | Separate streams if declarative manifest adds nested array flattening, or CDK migration |
 | `jira_collection_runs` not implemented | Sync monitoring handled by Airbyte platform sync logs; no connector-level run tracking table | Custom run tracking if needed beyond Airbyte platform capabilities |
-| URN-based surrogate key not implemented | `urn:jira:{tenant_id}:{source_instance_id}:{issue_key}` not generated at connector level | Deferred to Silver/dbt or future connector iteration |
+| URN-based surrogate key not implemented | `urn:jira:{tenant_id}:{source_id}:{issue_key}` not generated at connector level | Deferred to Silver/dbt or future connector iteration |
 
 ---
 
@@ -755,7 +756,7 @@ Jira JQL only accepts dates in `yyyy-MM-dd` or `yyyy-MM-dd HH:mm` format. The Ji
 - **PRD**: [PRD.md](./PRD.md)
 - **Bronze table schemas**: [`jira.md`](../jira.md)
 - **Connector Framework**: [`docs/domain/connector/specs/DESIGN.md`](../../../../domain/connector/specs/DESIGN.md)
-- **Airbyte Connector Development**: [`docs/domain/airbyte-connector/specs/DESIGN.md`](../../../../domain/airbyte-connector/specs/DESIGN.md)
+- **Connector Framework** (config naming §4.1, AddFields §4.6, descriptor §4.10): [`docs/domain/connector/specs/DESIGN.md`](../../../../domain/connector/specs/DESIGN.md)
 - **Task Tracking domain**: [`docs/components/connectors/task-tracking/`](../)
 
 ---

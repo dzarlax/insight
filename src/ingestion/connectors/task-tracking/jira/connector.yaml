@@ -36,9 +36,9 @@ definitions:
     type: AddFields
     fields:
       - path: [tenant_id]
-        value: "{{ config['insights_tenant_id'] }}"
-      - path: [source_instance_id]
-        value: "{{ config['jira_source_instance_id'] }}"
+        value: "{{ config['insight_tenant_id'] }}"
+      - path: [source_id]
+        value: "{{ config['insight_source_id'] }}"
 
   paginator:
     type: DefaultPaginator
@@ -105,7 +105,7 @@ definitions:
     properties:
       unique_key: {}
       tenant_id: {}
-      source_instance_id: {}
+      source_id: {}
       project_id: {}
       project_key: {}
       name: {}
@@ -122,7 +122,7 @@ definitions:
     properties:
       unique_key: {}
       tenant_id: {}
-      source_instance_id: {}
+      source_id: {}
       account_id: {}
       email: {}
       display_name: {}
@@ -136,7 +136,7 @@ definitions:
     properties:
       unique_key: {}
       tenant_id: {}
-      source_instance_id: {}
+      source_id: {}
       jira_id: {}
       id_readable: {}
       project_key: {}
@@ -155,7 +155,7 @@ definitions:
     properties:
       unique_key: {}
       tenant_id: {}
-      source_instance_id: {}
+      source_id: {}
       id_readable: {}
       author_account_id: {}
       changelog_id: {}
@@ -169,7 +169,7 @@ definitions:
     properties:
       unique_key: {}
       tenant_id: {}
-      source_instance_id: {}
+      source_id: {}
       comment_id: {}
       id_readable: {}
       author_account_id: {}
@@ -184,7 +184,7 @@ definitions:
     properties:
       unique_key: {}
       tenant_id: {}
-      source_instance_id: {}
+      source_id: {}
       worklog_id: {}
       id_readable: {}
       author_account_id: {}
@@ -200,7 +200,7 @@ definitions:
     properties:
       unique_key: {}
       tenant_id: {}
-      source_instance_id: {}
+      source_id: {}
       sprint_id: {}
       board_id: {}
       sprint_name: {}
@@ -269,7 +269,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insights_tenant_id'] }}-{{ config['jira_source_instance_id'] }}-{{ record['id'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - path: [project_id]
             value: "{{ record['id'] }}"
           - path: [project_key]
@@ -322,7 +322,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insights_tenant_id'] }}-{{ config['jira_source_instance_id'] }}-{{ record['accountId'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['accountId'] }}"
           - path: [account_id]
             value: "{{ record['accountId'] }}"
           - path: [email]
@@ -386,7 +386,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insights_tenant_id'] }}-{{ config['jira_source_instance_id'] }}-{{ record['key'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['key'] }}"
           - path: [jira_id]
             value: "{{ record['id'] }}"
           - path: [id_readable]
@@ -444,7 +444,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insights_tenant_id'] }}-{{ config['jira_source_instance_id'] }}-{{ record['id'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - path: [id_readable]
             value: "{{ stream_partition.id_readable }}"
           - path: [author_account_id]
@@ -492,7 +492,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insights_tenant_id'] }}-{{ config['jira_source_instance_id'] }}-{{ record['id'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - path: [comment_id]
             value: "{{ record['id'] }}"
           - path: [id_readable]
@@ -542,7 +542,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insights_tenant_id'] }}-{{ config['jira_source_instance_id'] }}-{{ record['id'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - path: [worklog_id]
             value: "{{ record['id'] }}"
           - path: [id_readable]
@@ -594,7 +594,7 @@ streams:
       - type: AddFields
         fields:
           - path: [unique_key]
-            value: "{{ config['insights_tenant_id'] }}-{{ config['jira_source_instance_id'] }}-{{ record['id'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}"
           - path: [sprint_id]
             value: "{{ record['id'] }}"
           - path: [board_id]
@@ -625,8 +625,8 @@ spec:
       - jira_instance_url
       - jira_email
       - jira_api_token
-      - insights_tenant_id
-      - jira_source_instance_id
+      - insight_tenant_id
+      - insight_source_id
       - jira_project_keys
     properties:
       jira_instance_url:
@@ -644,12 +644,12 @@ spec:
         title: Jira API Token
         airbyte_secret: true
         order: 2
-      insights_tenant_id:
+      insight_tenant_id:
         type: string
         title: Insights Tenant ID
         description: "Tenant isolation identifier for the ingestion layer"
         order: 3
-      jira_source_instance_id:
+      insight_source_id:
         type: string
         title: Source Instance ID
         description: "Instance discriminator (e.g., jira-team-alpha)"
