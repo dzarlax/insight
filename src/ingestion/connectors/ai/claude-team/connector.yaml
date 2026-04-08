@@ -63,7 +63,7 @@ definitions:
     page_token_option:
       type: RequestOption
       inject_into: request_parameter
-      field_name: after_id
+      field_name: next_page
 
 streams:
   # ── Stream 1: claude_team_users (full refresh, cursor pagination) ──

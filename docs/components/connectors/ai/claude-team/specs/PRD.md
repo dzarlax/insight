@@ -384,7 +384,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 
 | Stream | Endpoint | Method |
 |--------|----------|--------|
-| `claude_team_users` | `GET /v1/organizations/users?limit=100&after_id={cursor}` | Full refresh |
+| `claude_team_users` | `GET /v1/organizations/users?limit=100&next_page={token}` | Full refresh |
 | `claude_team_code_usage` | `GET /v1/organizations/usage_report/claude_code?starting_at=YYYY-MM-DD` | Incremental |
 | `claude_team_workspaces` | `GET /v1/organizations/workspaces?limit={n}` | Full refresh |
 | `claude_team_workspace_members` | `GET /v1/organizations/workspaces/{id}/members` | Full refresh (iterates workspaces) |
@@ -392,7 +392,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 
 **Authentication**: API key via `x-api-key` header, with required `anthropic-version: 2023-06-01` header.
 
-**Compatibility**: Anthropic Admin API. Response format is JSON with cursor-based pagination (`after_id`). Field additions are non-breaking.
+**Compatibility**: Anthropic Admin API. Response format is JSON with cursor-based pagination (`next_page` token). Field additions are non-breaking.
 
 ## 8. Use Cases
 
@@ -437,7 +437,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 **Main Flow**:
 
 1. Orchestrator triggers the connector with current state
-2. Connector fetches users from `GET /v1/organizations/users` (full refresh, cursor-paginated with `after_id`)
+2. Connector fetches users from `GET /v1/organizations/users` (full refresh, cursor-paginated with `next_page` token)
 3. Connector fetches code usage from `GET /v1/organizations/usage_report/claude_code` for the date range from last cursor to now
 4. Connector fetches workspaces from `GET /v1/organizations/workspaces` (full refresh)
 5. Connector fetches workspace members by iterating over each workspace ID and calling `GET /v1/organizations/workspaces/{id}/members`
@@ -489,7 +489,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 - The Anthropic Admin API response format remains stable across minor versions
 - `email` in the users endpoint and `actor_identifier` in the code usage endpoint are stable, non-null fields for user-type actors
 - Code usage data granularity is one row per `(date, actor_type, actor_identifier, terminal_type)`
-- All endpoints use cursor-based pagination with `after_id` or similar tokens
+- All endpoints use cursor-based pagination with `next_page` token or similar mechanisms
 - The `anthropic-version: 2023-06-01` header is required on all requests and will remain stable
 - Workspace members can be fetched by iterating over workspace IDs from the workspaces endpoint
 - Daily usage data is available with D+1 lag (same day or next day)
