@@ -16,7 +16,7 @@ SELECT
     toString(COALESCE(author_database_id, 0)) AS reviewer_uuid,
     COALESCE(state, '') AS status,
     if(state = 'APPROVED', 1, 0) AS approved,
-    parseDateTimeBestEffort(submitted_at) AS reviewed_at,
+    parseDateTimeBestEffortOrNull(submitted_at) AS reviewed_at,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

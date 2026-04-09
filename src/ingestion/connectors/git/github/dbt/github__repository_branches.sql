@@ -14,7 +14,7 @@ SELECT
     COALESCE(name, '') AS branch_name,
     if(name = default_branch_name, 1, 0) AS is_default,
     COALESCE(JSONExtractString(commit, 'sha'), '') AS last_commit_hash,
-    parseDateTimeBestEffort(pushed_at) AS last_commit_date,
+    parseDateTimeBestEffortOrNull(pushed_at) AS last_commit_date,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at

@@ -18,7 +18,7 @@ SELECT
     COALESCE(committer_name, '') AS committer_name,
     COALESCE(committer_email, '') AS committer_email,
     COALESCE(message, '') AS message,
-    parseDateTimeBestEffort(committed_date) AS date,
+    parseDateTimeBestEffortOrNull(committed_date) AS date,
     COALESCE(changed_files, 0) AS files_changed,
     COALESCE(additions, 0) AS lines_added,
     COALESCE(deletions, 0) AS lines_removed,
