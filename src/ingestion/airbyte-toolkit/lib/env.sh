@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
-# Resolves Airbyte credentials and workspace from K8s secrets.
-# Sources this file to set environment variables:
-#   AIRBYTE_TOKEN, AIRBYTE_CLIENT_ID, AIRBYTE_CLIENT_SECRET, WORKSPACE_ID
+# ---------------------------------------------------------------------------
+# Airbyte Toolkit — Environment resolver
 #
-# Usage: source ./scripts/resolve-airbyte-env.sh
+# Auto-detects host vs in-cluster runtime.
+# Resolves Airbyte API URL, JWT token, workspace ID.
+#
+# Usage: source airbyte-toolkit/lib/env.sh
+# Exports: AIRBYTE_API, AIRBYTE_TOKEN, WORKSPACE_ID
+# ---------------------------------------------------------------------------
 
 set -euo pipefail
 
-# KUBECONFIG can be empty when running in-cluster (uses service account)
-
-# Auto-detect: use in-cluster service URL if running in K8s, else localhost
+# Auto-detect runtime
 if [[ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]]; then
   export AIRBYTE_API="${AIRBYTE_API:-http://airbyte-airbyte-server-svc.airbyte.svc.cluster.local:8001}"
 else
   export AIRBYTE_API="${AIRBYTE_API:-http://localhost:8001}"
 fi
 
-# Read secrets
+# Read Airbyte auth secrets
 _secret_json=$(kubectl get secret -n airbyte airbyte-auth-secrets -o json 2>/dev/null) || {
-  echo "ERROR: cannot read airbyte-auth-secrets" >&2
+  echo "ERROR: cannot read airbyte-auth-secrets from namespace airbyte" >&2
   return 1 2>/dev/null || exit 1
 }
 
-export AIRBYTE_CLIENT_ID=$(echo "$_secret_json" | python3 -c "import sys,json,base64; print(base64.b64decode(json.load(sys.stdin)['data']['instance-admin-client-id']).decode())")
-export AIRBYTE_CLIENT_SECRET=$(echo "$_secret_json" | python3 -c "import sys,json,base64; print(base64.b64decode(json.load(sys.stdin)['data']['instance-admin-client-secret']).decode())")
-
 _jwt_secret=$(echo "$_secret_json" | python3 -c "import sys,json,base64; print(base64.b64decode(json.load(sys.stdin)['data']['jwt-signature-secret']).decode())")
 
+# Mint JWT token (short-lived, 5 minutes)
 export AIRBYTE_TOKEN=$(node -e "
   const c=require('crypto');
   const h=Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url');
@@ -36,7 +36,7 @@ export AIRBYTE_TOKEN=$(node -e "
   console.log(h+'.'+p+'.'+s);
 ")
 
-# Resolve workspace — use the default workspace created by Helm chart
+# Resolve workspace ID
 export WORKSPACE_ID=$(curl -sf -H "Authorization: Bearer $AIRBYTE_TOKEN" \
   "${AIRBYTE_API}/api/v1/workspaces/list_by_organization_id" \
   -X POST -H "Content-Type: application/json" \
@@ -44,7 +44,6 @@ export WORKSPACE_ID=$(curl -sf -H "Authorization: Bearer $AIRBYTE_TOKEN" \
   | python3 -c "
 import sys,json
 ws = json.load(sys.stdin).get('workspaces',[])
-# Pick the first workspace (created by Helm chart on install)
 print(ws[0]['workspaceId'] if ws else '')
 " 2>/dev/null)
 
@@ -52,19 +51,7 @@ if [[ -z "$WORKSPACE_ID" ]]; then
   echo "ERROR: no Airbyte workspace found" >&2
   return 1 2>/dev/null || exit 1
 fi
-echo "  Workspace: $WORKSPACE_ID" >&2
 
-# Resolve m365 source definition ID (if registered)
-export M365_DEFINITION_ID=$(curl -sf -H "Authorization: Bearer $AIRBYTE_TOKEN" \
-  "${AIRBYTE_API}/api/v1/source_definitions/list" \
-  -X POST -H "Content-Type: application/json" \
-  -d "{\"workspaceId\":\"$WORKSPACE_ID\"}" \
-  | python3 -c "
-import sys,json
-for d in json.load(sys.stdin).get('sourceDefinitions',[]):
-    if 'm365' in d['name'].lower():
-        print(d['sourceDefinitionId'])
-        break
-" 2>/dev/null) || true
+echo "  Workspace: $WORKSPACE_ID" >&2
 
 unset _secret_json _jwt_secret

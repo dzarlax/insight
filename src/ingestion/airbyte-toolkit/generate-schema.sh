@@ -9,8 +9,8 @@ set -euo pipefail
 # the connector's schemas/ directory.
 #
 # Usage:
-#   ./scripts/generate-schema.sh m365
-#   ./scripts/generate-schema.sh collaboration/m365
+#   ./airbyte-toolkit/generate-schema.sh m365
+#   ./airbyte-toolkit/generate-schema.sh collaboration/m365
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

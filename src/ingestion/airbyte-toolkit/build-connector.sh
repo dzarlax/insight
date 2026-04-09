@@ -5,16 +5,16 @@ set -euo pipefail
 # Build a CDK connector: Docker image → Kind load → Airbyte definition register/update.
 #
 # Usage:
-#   ./scripts/build-connector.sh <connector_path>
-#   ./scripts/build-connector.sh git/github
+#   ./airbyte-toolkit/build-connector.sh <connector_path>
+#   ./airbyte-toolkit/build-connector.sh git/github
 #
-# For nocode connectors (connector.yaml), use upload-manifests.sh instead.
+# For nocode connectors (connector.yaml), use airbyte-toolkit/register.sh instead.
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-source ./scripts/airbyte-state.sh
+source ./airbyte-toolkit/lib/state.sh
 
 CONNECTOR="${1:?Usage: $0 <connector_path>  (e.g. git/github)}"
 CONNECTOR_DIR="./connectors/${CONNECTOR}"
@@ -29,7 +29,7 @@ CONNECTOR_NAME=$(yq -r '.name' "$DESCRIPTOR")
 CONNECTOR_TYPE=$(yq -r '.type' "$DESCRIPTOR")
 
 if [[ "$CONNECTOR_TYPE" != "cdk" ]]; then
-  echo "ERROR: ${CONNECTOR_NAME} is type '${CONNECTOR_TYPE}', not 'cdk'. Use upload-manifests.sh for nocode connectors." >&2
+  echo "ERROR: ${CONNECTOR_NAME} is type '${CONNECTOR_TYPE}', not 'cdk'. Use airbyte-toolkit/register.sh for nocode connectors." >&2
   exit 1
 fi
 
@@ -52,10 +52,10 @@ fi
 
 # --- Step 3: Register/update Airbyte source definition ---
 if [[ -z "${AIRBYTE_TOKEN:-}" ]]; then
-  source ./scripts/resolve-airbyte-env.sh
+  source ./airbyte-toolkit/lib/env.sh
 fi
 
-EXISTING_DEF_ID=$(state_get "definitions.${CONNECTOR_NAME}")
+EXISTING_DEF_ID=$(state_get "definitions.${CONNECTOR_NAME}.id")
 
 DEF_ID=$(python3 - "$AIRBYTE_API" "$AIRBYTE_TOKEN" "$WORKSPACE_ID" \
   "$CONNECTOR_NAME" "$IMAGE_NAME" "$IMAGE_TAG" "$EXISTING_DEF_ID" <<'PYTHON'
@@ -106,8 +106,8 @@ PYTHON
 )
 
 if [[ -n "$DEF_ID" ]]; then
-  state_set "definitions.${CONNECTOR_NAME}" "$DEF_ID"
-  echo "  State saved: definitions.${CONNECTOR_NAME} = ${DEF_ID}"
+  state_set "definitions.${CONNECTOR_NAME}.id" "$DEF_ID"
+  echo "  State saved: definitions.${CONNECTOR_NAME}.id = ${DEF_ID}"
 fi
 
 echo ""
@@ -115,4 +115,4 @@ echo "=== Done: ${CONNECTOR_NAME} ==="
 echo "  Image:      ${IMAGE}"
 echo "  Definition: ${DEF_ID:-unknown}"
 echo ""
-echo "  Next: ./scripts/apply-connections.sh <tenant>"
+echo "  Next: ./airbyte-toolkit/connect.sh <tenant>"

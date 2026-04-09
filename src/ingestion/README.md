@@ -86,31 +86,33 @@ azure_client_secret: ""   # App registration client secret
 
 ## Prerequisites
 
+The ingestion stack is deployed as part of the Insight platform. Use the **root-level scripts** to manage the cluster:
+
 ```bash
-brew install kind kubectl helm
+# From the repo root:
+./up.sh          # Create cluster + deploy all services (including ingestion)
+./init.sh        # Apply secrets + initialize ingestion
+./down.sh        # Stop everything
+./cleanup.sh     # Delete cluster and all data
 ```
 
-## Quick Start
+See the root [README.md](../../README.md) for full Quick Start instructions.
+
+## Ingestion-only Quick Start
+
+If the cluster is already running and you only need to work with ingestion:
 
 ```bash
-# 1. Start the cluster (creates namespaces, deploys Airbyte + Argo)
-#    ClickHouse will be skipped until its Secret exists
-./up.sh
+# Ensure KUBECONFIG is set
+export KUBECONFIG=~/.kube/insight.kubeconfig
 
-# 2. Create and apply secrets
-cp secrets/clickhouse.yaml.example secrets/clickhouse.yaml
-cp secrets/airbyte.yaml.example secrets/airbyte.yaml
-cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
-# Edit each .yaml with real credentials
+# Apply secrets (if not already done)
 ./secrets/apply.sh
 
-# 3. Re-run up.sh — now ClickHouse will deploy
-./up.sh
-
-# 4. Initialize (register connectors, create connections, sync workflows)
+# Initialize (register connectors, create connections, sync workflows)
 ./run-init.sh
 
-# 5. Run a sync
+# Run a sync
 ./run-sync.sh m365 my-tenant
 ```
 
@@ -139,8 +141,8 @@ cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
 
 | Command | Description |
 |---------|-------------|
-| `./scripts/build-connector.sh <path>` | Build Docker image, load into Kind, register/update Airbyte definition |
-| `./scripts/reset-connector.sh <name> <tenant>` | Delete connection + source + definition, drop Bronze tables, clean state |
+| `./airbyte-toolkit/build-connector.sh <path>` | Build Docker image, load into Kind, register/update Airbyte definition |
+| `./airbyte-toolkit/reset-connector.sh <name> <tenant>` | Delete connection + source + definition, drop Bronze tables, clean state |
 
 ### Examples
 
@@ -152,7 +154,7 @@ cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
 ./update-connectors.sh
 
 # Build/rebuild a CDK connector (Docker image + Airbyte definition)
-./scripts/build-connector.sh git/github
+./airbyte-toolkit/build-connector.sh git/github
 
 # Update after changing tenant credentials
 ./update-connections.sh example-tenant
@@ -161,7 +163,7 @@ cp secrets/connectors/m365.yaml.example secrets/connectors/m365.yaml
 ./update-workflows.sh
 
 # Reset a connector (breaking schema change, full re-sync)
-./scripts/reset-connector.sh github example-tenant
+./airbyte-toolkit/reset-connector.sh github example-tenant
 
 # Monitor workflows
 open http://localhost:30500
@@ -173,7 +175,7 @@ After `./up.sh`:
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Airbyte | http://localhost:8001 | Printed by `up.sh` |
+| Airbyte | http://localhost:8001 | Port-forward |
 | Argo UI | http://localhost:30500 | No auth (local) |
 | ClickHouse | http://localhost:30123 | `default` / `clickhouse` |
 
@@ -201,7 +203,7 @@ kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$(kubect
 
 ```bash
 # Sets AIRBYTE_API, AIRBYTE_TOKEN, WORKSPACE_ID
-source ./scripts/resolve-airbyte-env.sh
+source ./airbyte-toolkit/lib/env.sh
 
 # Quick test
 curl -s -H "Authorization: Bearer $AIRBYTE_TOKEN" "$AIRBYTE_API/api/v1/health"
@@ -255,10 +257,9 @@ src/ingestion/
 │           ├── m365__comms_events.sql  # Bronze → Staging model
 │           └── schema.yml              # Source + tests
 │
-├── connections/                     # Tenant configs + Airbyte state
+├── connections/                     # Tenant configs
 │   ├── example-tenant.yaml.example  #   Template (tracked)
-│   ├── example-tenant.yaml          #   Real credentials (gitignored)
-│   └── .airbyte-state.yaml          #   Airbyte IDs registry (gitignored, auto-generated)
+│   └── example-tenant.yaml          #   Real credentials (gitignored)
 │
 ├── secrets/                         # K8s Secrets (all gitignored, examples tracked)
 │   ├── apply.sh                     #   Apply all secrets (infra + connectors)
@@ -288,20 +289,25 @@ src/ingestion/
 │   ├── argo/                        #   Helm values + RBAC
 │   └── clickhouse/                  #   Deployment, Service, PVC, ConfigMap
 │
+├── airbyte-toolkit/                 # Airbyte management module
+│   ├── register.sh                  #   Register connectors via API
+│   ├── connect.sh                   #   Create sources/destinations/connections
+│   ├── sync-state.sh                #   Sync state from Airbyte API
+│   ├── cleanup.sh                   #   Remove Airbyte resources
+│   ├── state.yaml                   #   Airbyte IDs registry (gitignored, auto-generated)
+│   └── lib/
+│       ├── env.sh                   #   JWT token + workspace resolution
+│       └── state.sh                 #   State library (state_get/state_set)
+│
 ├── scripts/                         # Internal scripts (run inside toolbox)
 │   ├── init.sh                      #   Full initialization
-│   ├── resolve-airbyte-env.sh       #   JWT token + workspace resolution
-│   ├── airbyte-state.sh             #   State library (state_get/state_set)
-│   ├── sync-airbyte-state.sh        #   Sync state from Airbyte API
-│   ├── upload-manifests.sh          #   Register connectors via API (nocode + CDK)
 │   ├── build-connector.sh           #   Build CDK connector (Docker → Kind → Airbyte)
 │   ├── reset-connector.sh           #   Reset connector (delete all + drop tables + clean state)
-│   ├── apply-connections.sh         #   Create sources/destinations/connections
 │   ├── sync-flows.sh               #   Generate + apply CronWorkflows
 │   └── wait-for-services.sh        #   kubectl wait for pods
 │
 └── tools/
-    ├── toolbox/                     # insight-toolbox Docker image (ghcr.io/cyberfabric/insight-toolbox)
+    ├── toolbox/                     # insight-toolbox Docker image (insight-toolbox)
     │   ├── Dockerfile               #   python + dbt + kubectl + yq
     │   └── build.sh                 #   Build + push to GHCR (or load into Kind)
     └── declarative-connector/       # Local connector debugging
@@ -310,34 +316,49 @@ src/ingestion/
 
 ## Airbyte State
 
-All Airbyte resource IDs (definitions, sources, destinations, connections) are tracked in
-per-tenant state files under `connections/.state/`. These files are auto-generated and
-gitignored — they're specific to the current Airbyte instance.
+All Airbyte resource IDs (definitions, sources, destinations, connections) are tracked in a
+single state file: `airbyte-toolkit/state.yaml`. This file is auto-generated and gitignored —
+it's specific to the current Airbyte instance.
 
 ```yaml
-# connections/.state/virtuozzo.yaml (auto-generated per tenant)
+# airbyte-toolkit/state.yaml (auto-generated, single file for all tenants)
 workspace_id: "4f79767b-..."
-shared_destination_id: "731c8d42-..."
-connectors:
-  m365-m365-main:
-    definition_id: "046ef483-..."
-    source_id: "60c560e8-..."
-    connection_id: "0220d2fe-..."
-tenants:
-  virtuozzo:
-    sources:
-      m365-m365-main: "60c560e8-..."
-    connections:
-      m365-m365-main: "0220d2fe-..."
+
+destinations:
+  clickhouse:
+    id: "731c8d42-..."
+
 definitions:
-  m365-m365-main: "046ef483-..."
+  m365:
+    id: "046ef483-..."
+  zoom:
+    id: "a1b2c3d4-..."
+
+tenants:
+  example-tenant:
+    connectors:
+      m365:
+        m365-main:
+          source_id: "60c560e8-..."
+          connection_id: "0220d2fe-..."
+      zoom:
+        zoom-main:
+          source_id: "b2c3d4e5-..."
+          connection_id: "c3d4e5f6-..."
 ```
 
-Scripts read/write state per-tenant automatically. Each tenant config (`connections/<tenant>.yaml`)
-produces its own state file (`connections/.state/<tenant>.yaml`).
+Every ID is accessed via a deterministic YAML path (no string concatenation, no search):
+
+| Resource | Path |
+|----------|------|
+| Workspace | `workspace_id` |
+| Destination | `destinations.clickhouse.id` |
+| Definition | `definitions.{connector}.id` |
+| Source | `tenants.{tenant}.connectors.{connector}.{source_id}.source_id` |
+| Connection | `tenants.{tenant}.connectors.{connector}.{source_id}.connection_id` |
 
 **Storage backend**:
-- **Local (host)**: files in `connections/.state/`
+- **Local (host)**: `airbyte-toolkit/state.yaml`
 - **In-cluster (K8s)**: ConfigMap `airbyte-state` in namespace `data`
 - Scripts auto-detect the backend
 
@@ -383,15 +404,15 @@ produces its own state file (`connections/.state/<tenant>.yaml`).
 
 3. Deploy:
    ```bash
-   ./scripts/build-connector.sh {category}/{name}   # Build image + register definition
-   ./scripts/apply-connections.sh my-tenant          # Create source + connection
+   ./airbyte-toolkit/build-connector.sh {category}/{name}   # Build image + register definition
+   ./airbyte-toolkit/connect.sh my-tenant             # Create source + connection
    ./update-workflows.sh my-tenant
    ```
 
 ### Reset (breaking schema change)
 
 ```bash
-./scripts/reset-connector.sh <name> <tenant>   # Delete everything + drop Bronze tables
+./airbyte-toolkit/reset-connector.sh <name> <tenant>   # Delete everything + drop Bronze tables
 # Then re-deploy using the steps above
 ```
 
@@ -429,39 +450,14 @@ export KUBECONFIG=/path/to/your/kubeconfig
 ./up.sh   # Uses ENV=production, applies production Helm values
 ```
 
-### Step 2: Set Up GHCR Image Pull
+### Step 2: Build and Load Toolbox Image
 
-Argo workflow templates use `ghcr.io/cyberfabric/insight-toolbox:latest` for dbt jobs.
-The image is private, so the cluster needs a pull secret.
+Argo workflow templates use `insight-toolbox:local` for dbt jobs.
+The image is built locally and loaded into the cluster:
 
-```bash
-# 1. Create a GitHub Personal Access Token (PAT) at https://github.com/settings/tokens
-#    Required scopes: read:packages (to pull), write:packages (to push updates)
-
-# 2. Create pull secret in argo and data namespaces
-kubectl create secret docker-registry ghcr-pull \
-  --docker-server=https://ghcr.io \
-  --docker-username=YOUR_GITHUB_USERNAME \
-  --docker-password=YOUR_PAT \
-  -n argo
-
-kubectl create secret docker-registry ghcr-pull \
-  --docker-server=https://ghcr.io \
-  --docker-username=YOUR_GITHUB_USERNAME \
-  --docker-password=YOUR_PAT \
-  -n data
-
-# 3. Patch default service account so all pods can pull
-kubectl patch serviceaccount default -n argo -p '{"imagePullSecrets": [{"name": "ghcr-pull"}]}'
-kubectl patch serviceaccount default -n data -p '{"imagePullSecrets": [{"name": "ghcr-pull"}]}'
-```
-
-To rebuild and push the toolbox image (after dbt model changes):
 ```bash
 cd src/ingestion
-docker buildx build --platform linux/amd64 \
-  -t ghcr.io/cyberfabric/insight-toolbox:latest \
-  -f tools/toolbox/Dockerfile --push .
+./tools/toolbox/build.sh   # Builds and loads into Kind (done automatically by up.sh)
 ```
 
 ### Step 3: Create and Apply Secrets
@@ -514,17 +510,17 @@ kubectl rollout restart deployment/clickhouse -n data
 kubectl rollout status deployment/clickhouse -n data
 
 # 4. Update Airbyte destination + connections with new password
-./scripts/apply-connections.sh example-tenant
+./airbyte-toolkit/connect.sh example-tenant
 ```
 
 ClickHouse uses `strategy: Recreate` — the old pod is terminated before the new one starts. This avoids PVC conflicts (ReadWriteOnce) and ensures the new password takes effect immediately.
 
-`apply-connections.sh` always updates the destination password from K8s Secret on every run. Existing connections are reused (they reference the destination by ID).
+`connect.sh` always updates the destination password from K8s Secret on every run. Existing connections are reused (they reference the destination by ID).
 
 ## Environment
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENV` | `local` | `local` (Kind) or `production` (existing K8s cluster) |
-| `KUBECONFIG` | `~/.kube/kind-ingestion` | Path to kubeconfig |
-| `TOOLBOX_IMAGE` | `insight-toolbox:local` | Docker image for toolbox (production: `ghcr.io/cyberfabric/insight-toolbox:latest`) |
+| `KUBECONFIG` | `~/.kube/insight.kubeconfig` | Path to kubeconfig |
+| `TOOLBOX_IMAGE` | `insight-toolbox:local` | Docker image for toolbox (production: `insight-toolbox:latest`) |

@@ -6,8 +6,8 @@ set -euo pipefail
 # drop Bronze tables in ClickHouse, and clean state files.
 #
 # Usage:
-#   ./scripts/reset-connector.sh <connector_name> <tenant>
-#   ./scripts/reset-connector.sh github example-tenant
+#   ./airbyte-toolkit/reset-connector.sh <connector_name> <tenant>
+#   ./airbyte-toolkit/reset-connector.sh github example-tenant
 #
 # Use when: schema breaking changes, pk migration, full re-sync needed.
 # ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-source ./scripts/airbyte-state.sh
+source ./airbyte-toolkit/lib/state.sh
 
 CONNECTOR="${1:?Usage: $0 <connector_name> <tenant>}"
 TENANT="${2:?Usage: $0 <connector_name> <tenant>}"
@@ -26,30 +26,23 @@ if [[ ! "$CONNECTOR" =~ ^[a-z0-9_-]+$ ]]; then
   exit 1
 fi
 
-export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/kind-ingestion}"
+export KUBECONFIG="${KUBECONFIG:-${HOME}/.kube/insight.kubeconfig}"
 
-# Resolve tenant_id from tenant config
-TENANT_ID=$(python3 -c "
-import yaml, sys
-try:
-    t = yaml.safe_load(open('connections/${TENANT}.yaml'))
-    print(t.get('tenant_id', '${TENANT}'))
-except Exception:
-    print('${TENANT}')
-" 2>/dev/null)
+# Tenant key in state = filename stem (not tenant_id from inside YAML)
+TENANT_KEY="$TENANT"
 
-echo "=== Resetting connector: ${CONNECTOR} (tenant: ${TENANT}) ==="
+echo "=== Resetting connector: ${CONNECTOR} (tenant: ${TENANT_KEY}) ==="
 
 # --- Resolve Airbyte env ---
 if [[ -z "${AIRBYTE_TOKEN:-}" ]]; then
-  source ./scripts/resolve-airbyte-env.sh
+  source ./airbyte-toolkit/lib/env.sh
 fi
 
 # --- Read state ---
-STATE_FILE_TENANT="./connections/.state/${TENANT}.yaml"
+STATE_FILE="./airbyte-toolkit/state.yaml"
 
-python3 - "$CONNECTOR" "$TENANT_ID" "$AIRBYTE_API" "$AIRBYTE_TOKEN" \
-  "$STATE_FILE_TENANT" <<'PYTHON'
+python3 - "$CONNECTOR" "$TENANT_KEY" "$AIRBYTE_API" "$AIRBYTE_TOKEN" \
+  "$STATE_FILE" <<'PYTHON'
 import sys, os, json, yaml, urllib.request, urllib.error, subprocess, base64
 
 connector, tenant_id, airbyte_url, token, state_path = sys.argv[1:6]
@@ -74,16 +67,14 @@ if os.path.exists(state_path):
     with open(state_path) as f:
         state = yaml.safe_load(f) or {}
 
-connectors = state.get("connectors", {})
+# Read tenant connectors from hierarchical state:
+#   tenants.<tenant>.connectors.<connector>.<source_id>.{source_id, connection_id}
+tenant_connectors = state.get("tenants", {}).get(tenant_id, {}).get("connectors", {}).get(connector, {})
 
-# Find matching connector keys (e.g. "github-github-cyberfabric")
-matching_keys = [k for k in connectors if k.startswith(f"{connector}-")]
-if not matching_keys:
-    print(f"  No state entries found for connector '{connector}'")
+if not tenant_connectors:
+    print(f"  No state entries found for connector '{connector}' in tenant '{tenant_id}'")
 
-for key in matching_keys:
-    entry = connectors[key]
-
+for source_key, entry in list(tenant_connectors.items()):
     # Delete connection
     conn_id = entry.get("connection_id")
     if conn_id:
@@ -96,22 +87,18 @@ for key in matching_keys:
         print(f"  Deleting source: {source_id}")
         api("/api/v1/sources/delete", {"sourceId": source_id})
 
-    # Delete definition
-    def_id = entry.get("definition_id")
-    if def_id:
-        print(f"  Deleting definition: {def_id}")
-        api("/api/v1/source_definitions/delete", {"sourceDefinitionId": def_id})
+    print(f"  Removed state entry: {connector}/{source_key}")
 
-    # Remove from state
-    del connectors[key]
-    print(f"  Removed state entry: {key}")
+# Delete definition (definitions.<connector>.id)
+def_id = state.get("definitions", {}).get(connector, {}).get("id")
+if def_id:
+    print(f"  Deleting definition: {def_id}")
+    api("/api/v1/source_definitions/delete", {"sourceDefinitionId": def_id})
 
-# Clean tenant-level state references
-for section in ("sources", "connections"):
-    t = state.get("tenants", {}).get(tenant_id, {}).get(section, {})
-    keys_to_remove = [k for k in t if k.startswith(f"{connector}-")]
-    for k in keys_to_remove:
-        del t[k]
+# Clean tenant-level connector state
+tenant_data = state.get("tenants", {}).get(tenant_id, {}).get("connectors", {})
+if connector in tenant_data:
+    del tenant_data[connector]
 
 # Clean definitions
 defs = state.get("definitions", {})
@@ -153,27 +140,14 @@ else:
     print(f"  SKIP: no ClickHouse password, cannot drop {db_name}")
 PYTHON
 
-# Clean main state file too
-MAIN_STATE="./connections/.airbyte-state.yaml"
-if [[ -f "$MAIN_STATE" ]]; then
-  python3 -c "
-import yaml, sys
-with open('$MAIN_STATE') as f:
-    state = yaml.safe_load(f) or {}
-defs = state.get('definitions', {})
-if '$CONNECTOR' in defs:
-    del defs['$CONNECTOR']
-    with open('$MAIN_STATE', 'w') as f:
-        yaml.dump(state, f, default_flow_style=False, sort_keys=False)
-    print('  Cleaned main state: $MAIN_STATE')
-"
-fi
+# Note: all state is now managed in a single file (airbyte-toolkit/state.yaml),
+# already cleaned by the Python block above.
 
 echo ""
 echo "=== Reset complete: ${CONNECTOR} ==="
 echo ""
 echo "  To recreate:"
-echo "    ./scripts/build-connector.sh <path>     # CDK only"
-echo "    ./scripts/upload-manifests.sh <path>     # nocode only"
-echo "    ./scripts/apply-connections.sh ${TENANT}"
+echo "    ./airbyte-toolkit/build-connector.sh <path>     # CDK only"
+echo "    ./airbyte-toolkit/register.sh <path>    # nocode only"
+echo "    ./airbyte-toolkit/connect.sh ${TENANT}"
 echo "    ./run-sync.sh ${CONNECTOR} ${TENANT}"

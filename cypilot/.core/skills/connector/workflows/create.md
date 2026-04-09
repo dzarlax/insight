@@ -227,7 +227,7 @@ Rules:
 - Labels: `app.kubernetes.io/part-of: insight`
 - Annotations: `insight.cyberfabric.com/connector: <name>`, `insight.cyberfabric.com/source-id: <name>-main`
 - `stringData` keys MUST match `spec.connection_specification` property names (with source-specific prefixes)
-- Do NOT include `insight_tenant_id` or `insight_source_id` — these are injected by `apply-connections.sh`
+- Do NOT include `insight_tenant_id` or `insight_source_id` — these are injected by `connect.sh`
 - Do NOT include `username`/`password` if using `BasicHttpAuthenticator` — these are Builder artifacts
 
 #### 3.4 `README.md` — Connector documentation
@@ -394,7 +394,7 @@ kubectl apply -f src/ingestion/secrets/connectors/<name>.yaml
 
 ```bash
 ./tools/declarative-connector/source.sh discover <category>/<name> <tenant>
-./scripts/generate-schema.sh <name>
+./airbyte-toolkit/generate-schema.sh <name>
 ```
 
 This saves real JSON schemas to `connectors/<category>/<name>/schemas/`.
@@ -407,7 +407,7 @@ Verify that all cursor fields exist in the schema (this prevents ClickHouse dest
 ### 5.6 Read data locally
 
 ```bash
-./scripts/generate-catalog.sh <name>
+./airbyte-toolkit/generate-catalog.sh <name>
 ./tools/declarative-connector/source.sh read <category>/<name> <tenant>
 ```
 
