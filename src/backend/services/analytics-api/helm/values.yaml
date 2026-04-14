@@ -17,6 +17,10 @@ resources:
     cpu: 500m
     memory: 512Mi
 
+# Use a pre-provisioned Secret instead of creating one from values below.
+# If set, secret.yaml is skipped entirely.
+existingSecret: ""
+
 # Database connections
 database:
   # MariaDB connection URL

@@ -31,7 +31,7 @@ spec:
               protocol: TCP
           envFrom:
             - secretRef:
-                name: {{ include "insight-analytics-api.fullname" . }}-config
+                name: {{ .Values.existingSecret | default (printf "%s-config" (include "insight-analytics-api.fullname" .)) }}
           securityContext:
             allowPrivilegeEscalation: false
           {{- with .Values.livenessProbe }}
@@ -51,6 +51,6 @@ spec:
           command: ["/app/analytics-api", "migrate"]
           envFrom:
             - secretRef:
-                name: {{ include "insight-analytics-api.fullname" . }}-config
+                name: {{ .Values.existingSecret | default (printf "%s-config" (include "insight-analytics-api.fullname" .)) }}
           securityContext:
             allowPrivilegeEscalation: false

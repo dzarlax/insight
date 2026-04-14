@@ -35,7 +35,7 @@ pub mod thresholds {
         pub metric_id: Uuid,
         pub field_name: String,
         pub operator: String,
-        #[sea_orm(column_type = "Decimal(Some((20, 4)))")]
+        #[sea_orm(column_type = "Decimal(Some((20, 6)))")]
         pub value: f64,
         pub level: String,
         pub created_at: ChronoDateTimeUtc,

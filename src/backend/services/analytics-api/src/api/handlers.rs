@@ -125,6 +125,7 @@ pub async fn update_metric(
     if let Some(enabled) = req.is_enabled {
         model.is_enabled = Set(enabled);
     }
+    model.updated_at = Set(chrono::Utc::now().into());
 
     let updated = model.update(&state.db).await.map_err(|e| {
         tracing::error!(error = %e, "failed to update metric");
@@ -148,6 +149,7 @@ pub async fn delete_metric(
 
     let mut model: entities::metrics::ActiveModel = existing.into();
     model.is_enabled = Set(false);
+    model.updated_at = Set(chrono::Utc::now().into());
     model.update(&state.db).await.map_err(|e| {
         tracing::error!(error = %e, "failed to soft-delete metric");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -526,6 +528,7 @@ pub async fn update_threshold(
         }
         model.level = Set(level);
     }
+    model.updated_at = Set(chrono::Utc::now().into());
 
     let updated = model.update(&state.db).await.map_err(|e| {
         tracing::error!(error = %e, "failed to update threshold");
