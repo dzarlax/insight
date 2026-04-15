@@ -8,7 +8,7 @@
 SELECT
     pr.tenant_id,
     pr.source_id,
-    concat(pr.tenant_id, ':', pr.source_id, ':', pr.workspace, ':', pr.repo_slug, ':', toString(pr.id), ':', JSONExtractString(p, 'uuid')) AS unique_key,
+    concat(COALESCE(pr.tenant_id, ''), ':', COALESCE(pr.source_id, ''), ':', COALESCE(pr.workspace, ''), ':', COALESCE(pr.repo_slug, ''), ':', toString(pr.id), ':', COALESCE(JSONExtractString(p, 'uuid'), '')) AS unique_key,
     COALESCE(pr.workspace, '') AS project_key,
     COALESCE(pr.repo_slug, '') AS repo_slug,
     COALESCE(pr.id, 0) AS pr_id,
@@ -16,7 +16,7 @@ SELECT
     COALESCE(JSONExtractString(p, 'uuid'), '') AS reviewer_uuid,
     COALESCE(JSONExtractString(p, 'state'), '') AS status,
     if(JSONExtractBool(p, 'approved'), 1, 0) AS approved,
-    NULL AS reviewed_at,
+    CAST(NULL AS Nullable(DateTime)) AS reviewed_at,
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     pr._airbyte_extracted_at

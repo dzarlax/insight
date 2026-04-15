@@ -29,13 +29,19 @@ SELECT
 FROM {{ source('bronze_bitbucket_cloud', 'commits') }} AS c
 LEFT JOIN (
     SELECT
+        tenant_id,
+        workspace,
+        repo_slug,
         sha,
         count() AS files_changed,
         SUM(COALESCE(additions, 0)) AS lines_added,
         SUM(COALESCE(deletions, 0)) AS lines_removed
     FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }}
-    GROUP BY sha
+    GROUP BY tenant_id, workspace, repo_slug, sha
 ) AS fc ON fc.sha = c.hash
+    AND fc.tenant_id = c.tenant_id
+    AND fc.workspace = c.workspace
+    AND fc.repo_slug = c.repo_slug
 {% if is_incremental() %}
 WHERE c._airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}
