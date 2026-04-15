@@ -232,7 +232,7 @@ async fn proxy_handler(state: Arc<ProxyState>, req: Request<Body>) -> Response {
                     "type": "urn:insight:error:bad_gateway",
                     "title": "Bad Gateway",
                     "status": 502,
-                    "detail": format!("upstream request failed: {e}")
+                    "detail": "upstream service unavailable"
                 })
                 .to_string(),
             )
