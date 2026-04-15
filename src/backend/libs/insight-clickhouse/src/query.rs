@@ -1,7 +1,7 @@
 //! Tenant-scoped, parameterized query builder.
 //!
 //! All values are passed via bind parameters — no string interpolation.
-//! The builder always starts with `WHERE tenant_id = ?` to enforce tenant isolation.
+//! The builder always starts with `WHERE insight_tenant_id = ?` to enforce tenant isolation.
 
 use clickhouse::{RowOwned, RowRead};
 use uuid::Uuid;
@@ -182,7 +182,7 @@ impl QueryBuilder {
         use std::fmt::Write;
 
         let select = self.select.as_deref().unwrap_or("*");
-        let mut sql = format!("SELECT {select} FROM {} WHERE tenant_id = ?", self.table);
+        let mut sql = format!("SELECT {select} FROM {} WHERE insight_tenant_id = ?", self.table);
 
         for filter in &self.filters {
             let _ = write!(sql, " AND {filter}");
@@ -307,7 +307,7 @@ mod tests {
             .unwrap()
             .to_sql();
 
-        assert_eq!(sql, "SELECT * FROM gold.metrics WHERE tenant_id = ?");
+        assert_eq!(sql, "SELECT * FROM gold.metrics WHERE insight_tenant_id = ?");
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            "SELECT name, value, created_at FROM gold.metrics WHERE tenant_id = ?"
+            "SELECT name, value, created_at FROM gold.metrics WHERE insight_tenant_id = ?"
         );
     }
 
@@ -339,7 +339,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            "SELECT * FROM silver.class_commits WHERE tenant_id = ? AND (org_unit_id = ?)"
+            "SELECT * FROM silver.class_commits WHERE insight_tenant_id = ? AND (org_unit_id = ?)"
         );
     }
 
@@ -361,7 +361,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            "SELECT * FROM gold.pr_cycle_time WHERE tenant_id = ? \
+            "SELECT * FROM gold.pr_cycle_time WHERE insight_tenant_id = ? \
              AND (org_unit_id = ?) AND (metric_date >= ?) AND (metric_date < ?)"
         );
     }
@@ -377,7 +377,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            "SELECT * FROM gold.metrics WHERE tenant_id = ? ORDER BY created_at DESC"
+            "SELECT * FROM gold.metrics WHERE insight_tenant_id = ? ORDER BY created_at DESC"
         );
     }
 
@@ -392,7 +392,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            "SELECT * FROM gold.metrics WHERE tenant_id = ? LIMIT 25 OFFSET 50"
+            "SELECT * FROM gold.metrics WHERE insight_tenant_id = ? LIMIT 25 OFFSET 50"
         );
     }
 
@@ -421,7 +421,7 @@ mod tests {
         assert_eq!(
             sql,
             "SELECT person_id, avg_hours, metric_date \
-             FROM gold.pr_cycle_time WHERE tenant_id = ? \
+             FROM gold.pr_cycle_time WHERE insight_tenant_id = ? \
              AND (org_unit_id = ?) AND (metric_date >= ?) AND (avg_hours > ?) \
              ORDER BY avg_hours DESC LIMIT 100 OFFSET 0"
         );
@@ -434,7 +434,7 @@ mod tests {
             .unwrap()
             .to_sql();
 
-        assert!(sql.contains("WHERE tenant_id = ?"));
+        assert!(sql.contains("WHERE insight_tenant_id = ?"));
         assert!(!sql.contains("AND"));
     }
 
@@ -449,7 +449,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            "SELECT * FROM gold.metrics WHERE tenant_id = ? AND (value > ?)"
+            "SELECT * FROM gold.metrics WHERE insight_tenant_id = ? AND (value > ?)"
         );
     }
 
@@ -463,7 +463,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            "SELECT * FROM gold.metrics WHERE tenant_id = ? LIMIT 10"
+            "SELECT * FROM gold.metrics WHERE insight_tenant_id = ? LIMIT 10"
         );
         assert!(!sql.contains("OFFSET"));
     }

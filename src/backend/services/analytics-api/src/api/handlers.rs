@@ -248,6 +248,20 @@ pub async fn query_metric(
         ApiError::internal("metric has invalid query_ref")
     })?;
 
+    // Allow $select to override the columns from query_ref
+    let select_expr = match &req.select {
+        Some(sel) if !sel.is_empty() => {
+            if !sel.split(',').all(|col| is_valid_ident(col.trim())) {
+                return Err(ApiError::bad_request(
+                    "urn:insight:error:invalid_select",
+                    format!("invalid $select: {sel}"),
+                ));
+            }
+            sel.clone()
+        }
+        _ => select_expr,
+    };
+
     let mut sql = format!("SELECT {select_expr} FROM {table} WHERE insight_tenant_id = ?");
     let mut params: Vec<String> = vec![ctx.insight_tenant_id.to_string()];
 
@@ -267,6 +281,16 @@ pub async fn query_metric(
         if let Some(person_id) = extract_odata_value(filter, "person_id", "eq") {
             sql.push_str(" AND person_id = ?");
             params.push(person_id);
+        }
+        // Org-unit filter — used by Team View to scope to a single team.
+        if let Some(org_unit_id) = extract_odata_value(filter, "org_unit_id", "eq") {
+            sql.push_str(" AND org_unit_id = ?");
+            params.push(org_unit_id);
+        }
+        // Drill filter — used by IC Dashboard drill modal.
+        if let Some(drill_id) = extract_odata_value(filter, "drill_id", "eq") {
+            sql.push_str(" AND drill_id = ?");
+            params.push(drill_id);
         }
     }
 
@@ -291,15 +315,47 @@ pub async fn query_metric(
 
     tracing::debug!(sql = %sql, metric_id = %id, "executing metric query");
 
-    // TODO: Execute the query against ClickHouse.
-    // Placeholder response with debug info.
-    let mut items: Vec<serde_json::Value> = vec![serde_json::json!({
-        "_debug_sql": sql,
-        "_debug_params": params,
-        "_note": "query execution not yet implemented — need dynamic row deserialization"
-    })];
+    // 5. Execute the query against ClickHouse using JSONEachRow format
+    //    for dynamic column deserialization (metric queries have varying schemas).
+    let mut query = state.ch.query(&sql);
+    for param in &params {
+        query = query.bind(param.as_str());
+    }
 
-    // 5. Evaluate thresholds on each result row
+    let mut cursor = query.fetch_bytes("JSONEachRow").map_err(|e| {
+        tracing::error!(error = %e, sql = %sql, "ClickHouse query failed");
+        ApiError::internal("query execution failed")
+    })?;
+
+    let raw_bytes = cursor.collect().await.map_err(|e| {
+        tracing::error!(error = %e, sql = %sql, "ClickHouse fetch failed");
+        ApiError::internal("query execution failed")
+    })?;
+
+    // Parse JSONEachRow: one JSON object per line
+    let all_rows: Vec<serde_json::Value> = if raw_bytes.is_empty() {
+        Vec::new()
+    } else {
+        raw_bytes
+            .split(|&b| b == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to parse ClickHouse JSON response");
+                ApiError::internal("failed to parse query results")
+            })?
+    };
+
+    // 6. Apply pagination — we fetched top+1 to detect has_next
+    let has_next = all_rows.len() > top as usize;
+    let mut items: Vec<serde_json::Value> = if has_next {
+        all_rows.into_iter().take(top as usize).collect()
+    } else {
+        all_rows
+    };
+
+    // 7. Evaluate thresholds on each result row
     for item in &mut items {
         if let Some(obj) = item.as_object_mut() {
             let mut threshold_results = serde_json::Map::new();
@@ -328,7 +384,7 @@ pub async fn query_metric(
     let response = QueryResponse {
         items,
         page_info: PageInfo {
-            has_next: false,
+            has_next,
             cursor: None,
         },
     };
