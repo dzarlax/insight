@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('github__file_changes') }}
+-- depends_on: {{ ref('bitbucket_cloud__file_changes') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',

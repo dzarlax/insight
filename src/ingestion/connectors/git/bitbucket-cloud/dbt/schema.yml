@@ -1,0 +1,38 @@
+version: 2
+
+sources:
+  - name: bronze_bitbucket_cloud
+    schema: bronze_bitbucket_cloud
+    tables:
+      - name: repositories
+      - name: branches
+      - name: commits
+      - name: file_changes
+      - name: pull_requests
+      - name: pull_request_comments
+      - name: pull_request_commits
+
+models:
+  - name: bitbucket_cloud__repositories
+    description: "Bitbucket Cloud repositories -> staging, feeds class_git_repositories"
+
+  - name: bitbucket_cloud__repository_branches
+    description: "Bitbucket Cloud branches -> staging, feeds class_git_repository_branches"
+
+  - name: bitbucket_cloud__commits
+    description: "Bitbucket Cloud commits -> staging, feeds class_git_commits"
+
+  - name: bitbucket_cloud__file_changes
+    description: "Bitbucket Cloud file changes -> staging, feeds class_git_file_changes"
+
+  - name: bitbucket_cloud__pull_requests
+    description: "Bitbucket Cloud pull requests -> staging, feeds class_git_pull_requests"
+
+  - name: bitbucket_cloud__pull_requests_reviewers
+    description: "Bitbucket Cloud PR reviewers (from participants) -> staging, feeds class_git_pull_requests_reviewers"
+
+  - name: bitbucket_cloud__pull_requests_comments
+    description: "Bitbucket Cloud PR comments -> staging, feeds class_git_pull_requests_comments"
+
+  - name: bitbucket_cloud__pull_requests_commits
+    description: "Bitbucket Cloud PR commits -> staging, feeds class_git_pull_requests_commits"

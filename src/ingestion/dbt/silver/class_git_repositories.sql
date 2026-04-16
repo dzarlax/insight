@@ -1,4 +1,5 @@
 -- depends_on: {{ ref('github__repositories') }}
+-- depends_on: {{ ref('bitbucket_cloud__repositories') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',
