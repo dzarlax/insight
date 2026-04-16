@@ -328,7 +328,7 @@ Provides the orchestration and connection metadata that links the extraction com
 
 ##### Responsibility scope
 
-Declares: connector name and version, cron schedule, workflow template, `dbt_select` expression, connection namespace (`bronze_{name}`), and stream name filter list.
+Declares: connector name and version, cron schedule, workflow template, `dbt_select` expression, and connection namespace (`bronze_{name}`). Does NOT declare streams or Silver targets -- stream definitions and sync modes are owned by the Airbyte connector (manifest or CDK source) and discovered automatically via `airbyte discover`.
 
 ##### Responsibility boundaries
 
@@ -365,7 +365,7 @@ All connectors (nocode and CDK) respond to these four commands. The Airbyte prot
 |-------------------|----------------|----------|
 | Connector Orchestrator (Argo Workflows) | Workflow templates + cron triggers | Schedules and executes connector sync runs |
 | dbt Silver union models | `union_by_tag` macro | Combines per-connector Staging output into canonical Silver tables |
-| `apply-connections.sh` | Shell script reading `descriptor.yaml` | Provisions Airbyte connections from descriptor metadata |
+| `airbyte-toolkit/connect.sh` | Shell script reading `descriptor.yaml` | Provisions Airbyte connections from descriptor metadata |
 | `generate-schema.sh` | Shell script | Generates JSON schemas from real API responses |
 | `generate-catalog.sh` | Shell script | Generates configured catalog for local testing |
 
@@ -812,7 +812,7 @@ The `unique_key` pattern is always: `{{ config['insight_tenant_id'] }}-{{ config
 
 ### 4.7 Schema Rules
 
-Schemas MUST be generated from real API data using `./scripts/generate-schema.sh {name}`.
+Schemas MUST be generated from real API data using `./airbyte-toolkit/generate-schema.sh {name}`.
 
 Use `InlineSchemaLoader` with explicit field definitions:
 
@@ -942,7 +942,7 @@ schedule: "0 2 * * *"
 workflow: sync
 dbt_select: "tag:m365+"
 
-# Connection config (used by apply-connections.sh)
+# Connection config (used by airbyte-toolkit/connect.sh)
 connection:
   namespace: "bronze_m365"
 ```
@@ -960,12 +960,24 @@ Field reference:
 | `dbt_select` | Yes | dbt selector for transformations (use `+` suffix for downstream, e.g., `tag:m365+`) |
 | `connection.namespace` | Yes | ClickHouse database per connector (`bronze_{name}`, e.g., `bronze_m365`) |
 
+**Prohibited fields** (MUST NOT appear in `descriptor.yaml`):
+
+| Field | Reason |
+|-------|--------|
+| `streams` | Stream definitions are owned by the Airbyte connector (manifest or CDK source). `apply-connections.sh` discovers streams via Airbyte `discover` command. Duplicating them in the descriptor creates drift risk and maintenance burden. |
+| `silver_targets` | Silver table targets are determined by dbt model tags (`dbt_select`), not by an explicit list. The dbt DAG is the source of truth for which Silver tables a connector populates. |
+
 ### 4.11 Connector Package Structure
 
 ```
 connectors/{category}/{name}/
-  connector.yaml              # Airbyte declarative manifest (nocode)
-  descriptor.yaml             # Schedule, streams, dbt_select, workflow, connection config
+  connector.yaml              # Airbyte declarative manifest (nocode only)
+  Dockerfile                  # Docker build (CDK only)
+  source_{name}/              # Python source code (CDK only)
+    source.py                 #   AbstractSource implementation
+    spec.json                 #   Connection specification
+    streams/                  #   Stream implementations
+  descriptor.yaml             # Schedule, dbt_select, workflow, connection namespace (no streams)
   README.md                   # Connector documentation and K8s Secret fields
   schemas/                    # Generated JSON schemas per stream
     {stream_name}.json
@@ -996,9 +1008,11 @@ Credentials are never stored in the connector package:
 
 1. K8s Secret example files live in `src/ingestion/secrets/connectors/{name}.yaml.example` (tracked in repo)
 2. Real secrets are in `src/ingestion/secrets/connectors/{name}.yaml` (gitignored)
-3. `apply-connections.sh` discovers secrets by label and injects credentials into Airbyte
+3. `airbyte-toolkit/connect.sh` discovers secrets by label and injects credentials into Airbyte
 
 ### 4.12 Development Workflow
+
+#### Nocode (declarative YAML)
 
 | Step | Command | What it does |
 |------|---------|-------------|
@@ -1008,10 +1022,32 @@ Credentials are never stored in the connector package:
 | 4 | Validate | `./tools/declarative-connector/source.sh validate {cat}/{name}` |
 | 5 | Check | `./tools/declarative-connector/source.sh check {cat}/{name}` |
 | 6 | Discover | `./tools/declarative-connector/source.sh discover {cat}/{name}` |
-| 7 | Generate schema | `./scripts/generate-schema.sh {name}` -- saves to `schemas/` |
-| 8 | Generate catalog | `./scripts/generate-catalog.sh {name}` -- saves configured catalog |
+| 7 | Generate schema | `./airbyte-toolkit/generate-schema.sh {name}` -- saves to `schemas/` |
+| 8 | Generate catalog | `./airbyte-toolkit/generate-catalog.sh {name}` -- saves configured catalog |
 | 9 | Read | `./tools/declarative-connector/source.sh read {cat}/{name} dev` |
 | 10 | Verify | Every record has `tenant_id`, `source_id`, `unique_key` |
+
+#### CDK (Python)
+
+| Step | Command | What it does |
+|------|---------|-------------|
+| 1 | Create directory | `connectors/{category}/{name}/` with `Dockerfile`, `source_{name}/`, `descriptor.yaml` |
+| 2 | Write source | Implement `AbstractSource` with `check`, `streams`. Inject `tenant_id`, `source_id`, `unique_key` in records |
+| 3 | Write spec | `source_{name}/spec.json` with `insight_tenant_id`, `insight_source_id` required, prefixed config fields |
+| 4 | Create K8s Secret | Copy from `secrets/connectors/{name}.yaml.example`, fill in real values, apply |
+| 5 | Build + register | `./airbyte-toolkit/build-connector.sh {cat}/{name}` — Docker build → Kind load → Airbyte definition |
+| 6 | Create connection | `./scripts/apply-connections.sh <tenant>` — source + connection via discover |
+| 7 | Sync | `./run-sync.sh {name} <tenant>` — Argo workflow (sync + dbt) |
+| 8 | Verify | Every record has `tenant_id`, `source_id`, `unique_key` |
+
+#### Reset (breaking changes)
+
+| Step | Command | What it does |
+|------|---------|-------------|
+| 1 | Reset | `./airbyte-toolkit/reset-connector.sh {name} <tenant>` — deletes connection, source, definition; drops Bronze tables; cleans state |
+| 2 | Rebuild | `./airbyte-toolkit/build-connector.sh {cat}/{name}` (CDK) or `./scripts/upload-manifests.sh {cat}/{name}` (nocode) |
+| 3 | Reconnect | `./scripts/apply-connections.sh <tenant>` |
+| 4 | Re-sync | `./run-sync.sh {name} <tenant>` |
 
 ### 4.13 dbt Model Rules
 
@@ -1065,20 +1101,20 @@ WHERE e.tenant_id = t.tenant_id
 | ClickHouse destination NPE `getCursor` | Cursor field (e.g. `end_time`) missing from inline schema | Run `generate-schema.sh`, update manifest inline schemas to match |
 | `full_refresh` + `overwrite` NPE | ClickHouse destination v2 bug | Always use `destinationSyncMode: append_dedup` |
 | Stale schema after manifest update | Source created with old definition ID | `update-connections.sh` detects this and recreates source |
-| Duplicate definitions in Airbyte | Old upload-manifests.sh created new definition each time | Fixed: updates definition in-place, ID stored in `.airbyte-state.yaml` |
+| Duplicate definitions in Airbyte | Old airbyte-toolkit/register.sh created new definition each time | Fixed: updates definition in-place, ID stored in `airbyte-toolkit/state.yaml` |
 | Built-in vs custom connector name collision | Built-in "Zoom" found before custom "zoom" | Eliminated: scripts use definition ID from state, not name lookup |
 | Source config validation error | Source uses old definition with different spec fields | Re-run `update-connectors.sh` then `update-connections.sh` (auto-detects change) |
-| State out of sync | `.airbyte-state.yaml` doesn't match Airbyte | Run `./scripts/sync-airbyte-state.sh` to re-fetch all IDs |
+| State out of sync | `airbyte-toolkit/state.yaml` doesn't match Airbyte | Run `./airbyte-toolkit/sync-state.sh` to re-fetch all IDs |
 
 ### 4.16 Correct Deployment Order
 
 1. **Local first**: `source.sh validate` → `check` → `discover` → `generate-schema.sh` → `read`
 2. **Verify schema**: all cursor fields present, all streams have data
-3. **Upload**: `update-connectors.sh` — updates definition in-place, saves ID to `.airbyte-state.yaml`
+3. **Upload**: `update-connectors.sh` — updates definition in-place, saves ID to `airbyte-toolkit/state.yaml`
 4. **Connect**: `update-connections.sh <tenant>` — reads definition ID from state, handles create/update/recreate
 5. **Sync**: `run-sync.sh <name> <tenant>` — reads connection ID from state → `logs.sh -f latest`
 6. **Debug**: `logs.sh airbyte latest` for Airbyte-level errors
-7. **State recovery**: `sync-airbyte-state.sh` if `.airbyte-state.yaml` is missing or stale
+7. **State recovery**: `airbyte-toolkit/sync-state.sh` if `airbyte-toolkit/state.yaml` is missing or stale
 
 ## 5. Traceability
 

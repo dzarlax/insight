@@ -9,6 +9,15 @@ uv.lock
 local
 access
 
-# Claude Code runtime artifacts
-.claude/scheduled_tasks.lock
+# IDE
+.vs/
+.prs/
+
+# Claude Code local state
 .claude/worktrees/
+.claude/settings.local.json
+.claude/design_validate.json
+.claude/scheduled_tasks.lock
+
+# Cypilot plans (local working state)
+cypilot/.plans/

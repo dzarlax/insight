@@ -6,8 +6,6 @@ metadata:
   labels:
     app.kubernetes.io/part-of: ingestion
 spec:
-  imagePullSecrets:
-    - name: ghcr-pull
   entrypoint: run
   templates:
     - name: run

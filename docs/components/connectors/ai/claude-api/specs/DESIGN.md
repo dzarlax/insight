@@ -96,6 +96,7 @@ graph LR
 |--------|----------|--------|
 | `cpt-insightspec-adr-claude-api-001` | Drop `inference_geo` from `group_by` (API max-5 limit) | Unique key reduced to 6 components; inference_geo nullable in Bronze |
 | `cpt-insightspec-adr-claude-api-002` | Nested response extraction with P1D step + AddFields mapping | `field_path: [data, "0", results]`; field names mapped; cost_report schema expanded |
+| `cpt-insightspec-adr-claude-api-003` | Cursor granularity `PT1S` to avoid empty date-boundary windows | `cursor_granularity: PT1S` on incremental streams; prevents `starting_at == ending_at` |
 
 ### 1.3 Architecture Layers
 
@@ -246,7 +247,7 @@ Single YAML file that defines all streams, authentication, pagination strategies
 - Declares 5 data streams: `claude_api_messages_usage`, `claude_api_cost_report`, `claude_api_keys`, `claude_api_workspaces`, `claude_api_invites`.
 - Defines `ApiKeyAuthenticator` with `header: x-api-key` for authentication.
 - Defines `request_headers` with `anthropic-version: 2023-06-01` on each requester.
-- Implements `DatetimeBasedCursor` for incremental streams (usage, cost) with `P1D` step.
+- Implements `DatetimeBasedCursor` for incremental streams (usage, cost) with `P1D` step and `PT1S` cursor granularity (see [ADR-003](./ADR/ADR-003-cursor-granularity-boundary-fix.md)).
 - Implements `CursorPagination` for usage/cost streams using `next_page` token.
 - Implements `OffsetIncrement` pagination for keys/workspaces/invites.
 - Implements `AddFields` transformations for framework fields and composite unique keys.
@@ -673,7 +674,7 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 
 **Usage and cost streams**:
 - Cursor field: `date`
-- Cursor granularity: daily (ISO 8601 date)
+- Cursor granularity: `PT1S` (one second; prevents empty date-boundary windows — see [ADR-003](./ADR/ADR-003-cursor-granularity-boundary-fix.md))
 - Step size: `P1D` (one day per request — see ADR-002 for nested response extraction)
 - Lookback: configurable `start_date` for first run; subsequent runs start from last cursor + 1 day
 - No billing period boundary issues: Anthropic API data is finalized daily
@@ -683,11 +684,11 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 - Small dataset sizes make full refresh efficient
 - Upsert semantics prevent duplicates
 
-**Date windowing example** (P1D step, one day per request):
-1. `starting_at=2026-03-25`, `ending_at=2026-03-26`
-2. `starting_at=2026-03-26`, `ending_at=2026-03-27`
-3. `starting_at=2026-03-27`, `ending_at=2026-03-28`
-4. ... (one request per day until today)
+**Date windowing example** (P1D step, PT1S granularity, one day per request):
+1. `starting_at=2026-03-25T00:00:00Z`, `ending_at=2026-03-25T23:59:59Z`
+2. `starting_at=2026-03-26T00:00:00Z`, `ending_at=2026-03-26T23:59:59Z`
+3. `starting_at=2026-03-27T00:00:00Z`, `ending_at=2026-03-27T23:59:59Z`
+4. ... (one request per day until today, inclusive)
 
 ### 4.4 Capacity Estimates
 
@@ -749,6 +750,7 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 |-----|-------|--------|
 | [ADR-001](./ADR/ADR-001-group-by-limit-inference-geo.md) (`cpt-insightspec-adr-claude-api-001`) | Drop `inference_geo` from `group_by` dimensions (API max-5 limit) | Accepted |
 | [ADR-002](./ADR/ADR-002-api-response-structure.md) (`cpt-insightspec-adr-claude-api-002`) | API response structure — nested records, field mapping, cost_report schema expansion | Accepted |
+| [ADR-003](./ADR/ADR-003-cursor-granularity-boundary-fix.md) (`cpt-insightspec-adr-claude-api-003`) | Cursor granularity `PT1S` to avoid empty date-boundary windows | Accepted |
 
 ---
 

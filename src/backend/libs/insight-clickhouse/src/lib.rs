@@ -81,7 +81,7 @@ impl Client {
 
     /// Returns a [`QueryBuilder`] scoped to the given tenant.
     ///
-    /// The builder automatically adds `WHERE tenant_id = ?` and binds the
+    /// The builder automatically adds `WHERE insight_tenant_id = ?` and binds the
     /// tenant ID. All subsequent filters are appended with `AND`.
     ///
     /// # Errors

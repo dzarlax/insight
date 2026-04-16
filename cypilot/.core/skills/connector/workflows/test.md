@@ -55,7 +55,7 @@ Discovered N streams:
 
 ```bash
 # Generate catalog if missing
-./scripts/generate-catalog.sh CONNECTOR_NAME <tenant>
+./airbyte-toolkit/generate-catalog.sh CONNECTOR_NAME <tenant>
 
 # Read data
 ./tools/declarative-connector/source.sh read CONNECTOR_PATH <tenant>
@@ -84,7 +84,7 @@ After discover, verify that ALL cursor fields exist in the schema:
 
 ```bash
 # Generate schema from real data
-./scripts/generate-schema.sh <name> <tenant>
+./airbyte-toolkit/generate-schema.sh <name> <tenant>
 
 # Compare generated schema with inline schema in manifest
 # Every field in generated schema should be in manifest inline schema

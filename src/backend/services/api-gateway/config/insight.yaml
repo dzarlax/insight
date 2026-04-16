@@ -20,7 +20,7 @@ modules:
       bind_addr: "0.0.0.0:8080"
       enable_docs: false
       cors_enabled: true
-      prefix_path: "/api/v1"
+      prefix_path: "/api"
       openapi:
         title: "Insight API"
         version: "0.1.0"
@@ -66,7 +66,7 @@ modules:
 
   # ─── Auth Info (public endpoint for frontend) ───────────────
   # NOTE: issuer_url MUST match oidc-authn-plugin.config.issuer_url above.
-  # Both are set from the same OIDC_ISSUER_URL env var / Helm oidc.issuerUrl value.
+  # Both are set from the same OIDC_ISSUER_URL env var / Helm oidc.issuer value.
   auth-info:
     config:
       issuer_url: "${OIDC_ISSUER_URL}"
@@ -105,6 +105,15 @@ modules:
           name: "default"
           parent_id: null
           status: active
+
+  # ─── Reverse Proxy ─────────────────────────────────────────
+  # Routes requests to downstream services after authentication.
+  # Each route strips its prefix and forwards to the upstream URL.
+  proxy:
+    config:
+      routes:
+        - prefix: "/analytics"
+          upstream: "${PROXY_ANALYTICS_URL:=http://analytics-api:8081}"
 
 # ─── Local development ──────────────────────────────────────
 # To run without OIDC (auth disabled), override:

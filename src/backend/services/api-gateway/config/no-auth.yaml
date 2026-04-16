@@ -18,7 +18,7 @@ modules:
       bind_addr: "127.0.0.1:8080"
       enable_docs: true
       cors_enabled: true
-      prefix_path: "/api/v1"
+      prefix_path: "/api"
       openapi:
         title: "Insight API (dev)"
         version: "0.1.0-dev"
@@ -64,3 +64,9 @@ modules:
           name: "default"
           parent_id: null
           status: active
+
+  proxy:
+    config:
+      routes:
+        - prefix: "/analytics"
+          upstream: "http://localhost:8081"

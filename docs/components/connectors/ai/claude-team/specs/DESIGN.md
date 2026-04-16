@@ -94,6 +94,12 @@ graph LR
 | `cpt-insightspec-nfr-claude-team-completeness` | 100% extraction per stream per run | Pagination | All endpoints paginated to exhaustion | Compare record count with API pagination metadata |
 | `cpt-insightspec-nfr-claude-team-schema-stability` | No unannounced breaking changes | Manifest schema | Inline schema definitions; versioned connector | Schema diff on version updates |
 
+#### Architecture Decision Records
+
+| ADR ID | Decision | Impact |
+|--------|----------|--------|
+| `cpt-insightspec-adr-claude-team-001` | Cursor granularity `PT1S` for consistency with claude-api date-boundary fix | Defensive measure; prevents latent bug if `end_time_option` is added |
+
 ### 1.3 Architecture Layers
 
 - [ ] `p3` - **ID**: `cpt-insightspec-tech-claude-team-connector`
@@ -140,7 +146,7 @@ All five Anthropic Admin API endpoints use HTTP GET with query parameters for pa
 
 - [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-team-cursor-pagination`
 
-The users endpoint uses cursor-based pagination with `after_id` parameter (the ID of the last record in the previous page). This differs from the page-increment pagination used by Cursor. The manifest must use `CursorPagination` for streams that support it.
+The users endpoint uses cursor-based pagination with `next_page` token returned in the API response. The manifest passes this token back as the `page` query parameter on subsequent requests. Pagination stops when `next_page` is absent or empty in the response. This differs from the page-increment pagination used by Cursor. The manifest must use `CursorPagination` for streams that support it.
 
 #### Substream Pattern for Workspace Members
 
@@ -188,7 +194,7 @@ The Claude Team connector is a single declarative manifest that defines five dat
 graph TD
     subgraph Manifest["connector.yaml (Declarative Manifest)"]
         Auth["ApiKeyAuthenticator<br/>x-api-key header<br/>+ anthropic-version: 2023-06-01"]
-        S1["Stream: claude_team_users<br/>GET /v1/organizations/users<br/>Full refresh, CursorPagination (after_id)"]
+        S1["Stream: claude_team_users<br/>GET /v1/organizations/users<br/>Full refresh, CursorPagination (next_page)"]
         S2["Stream: claude_team_code_usage<br/>GET /v1/organizations/usage_report/claude_code<br/>Incremental, DatetimeBasedCursor"]
         S3["Stream: claude_team_workspaces<br/>GET /v1/organizations/workspaces<br/>Full refresh"]
         S4["Stream: claude_team_workspace_members<br/>GET /v1/organizations/workspaces/{id}/members<br/>Full refresh, SubstreamPartitionRouter"]
@@ -345,11 +351,12 @@ streams:
         type: DefaultPaginator
         pagination_strategy:
           type: CursorPagination
-          cursor_value: "{{ last_record['id'] }}"
+          cursor_value: "{{ response.get('next_page', '') }}"
+          stop_condition: "{{ response.get('next_page') is none or response.get('next_page') == '' }}"
         page_token_option:
           type: RequestOption
           inject_into: request_parameter
-          field_name: after_id
+          field_name: page
     transformations:
       - type: AddFields
         fields:
@@ -407,7 +414,7 @@ Ensures every record emitted by all streams contains `tenant_id` from the connec
 
 | Stream | Endpoint | Method | Pagination | Date Params |
 |--------|----------|--------|------------|-------------|
-| `claude_team_users` | `GET /v1/organizations/users` | GET | Cursor: `after_id`, `limit=100` | None |
+| `claude_team_users` | `GET /v1/organizations/users` | GET | Cursor: `page` param (from response `next_page`), `limit=100` | None |
 | `claude_team_code_usage` | `GET /v1/organizations/usage_report/claude_code` | GET | Cursor-based | Query: `starting_at` (YYYY-MM-DD only; no `ending_at` or `bucket_width`) |
 | `claude_team_workspaces` | `GET /v1/organizations/workspaces` | GET | `limit` param | None |
 | `claude_team_workspace_members` | `GET /v1/organizations/workspaces/{id}/members` | GET | `limit` param | None |
@@ -417,7 +424,7 @@ Ensures every record emitted by all streams contains `tenant_id` from the connec
 
 | Stream | Pagination mechanism | Stop condition |
 |--------|---------------------|----------------|
-| `claude_team_users` | `after_id` cursor (last record ID) | Empty response or fewer records than `limit` |
+| `claude_team_users` | `next_page` token from response → sent as `page` param | `next_page` absent or empty in response |
 | `claude_team_code_usage` | Cursor-based | No more pages returned |
 | `claude_team_workspaces` | Single page (all results with `limit`) | Single response |
 | `claude_team_workspace_members` | Per-workspace, single page each | Iterated over all workspace IDs |
@@ -533,8 +540,8 @@ sequenceDiagram
     Orch->>Src: run read (config, manifest, catalog, state)
 
     Note over Src,AApi: Stream 1: claude_team_users (full refresh)
-    loop Cursor pagination (after_id)
-        Src->>AApi: GET /v1/organizations/users?limit=100&after_id={cursor}<br/>[x-api-key, anthropic-version]
+    loop Cursor pagination (page)
+        Src->>AApi: GET /v1/organizations/users?limit=100&page={token}<br/>[x-api-key, anthropic-version]
         AApi-->>Src: {data: [...], has_more: bool}
         Src->>Src: Wait 1s between pages
     end
@@ -879,7 +886,11 @@ The following checklist domains have been evaluated and are not applicable for t
 
 ### Architecture Decision Records
 
-No ADRs have been recorded for this connector yet. Architectural decisions are documented inline:
+| ADR | Title | Status |
+|-----|-------|--------|
+| [ADR-001](./ADR/ADR-001-cursor-granularity-boundary-fix.md) (`cpt-insightspec-adr-claude-team-001`) | Cursor granularity `PT1S` for consistency with claude-api date-boundary fix | Accepted |
+
+Additional architectural decisions documented inline:
 
 - **Authentication mechanism** (API key via `x-api-key` over Basic/Bearer): SS2.2 Constraint `cpt-insightspec-constraint-claude-team-api-key-auth`
 - **Substream pattern for workspace members**: SS2.2 Constraint `cpt-insightspec-constraint-claude-team-substream`
@@ -889,6 +900,6 @@ No ADRs have been recorded for this connector yet. Architectural decisions are d
 ## 5. Traceability
 
 - **PRD**: [PRD.md](./PRD.md)
-- **ADRs**: [ADR/](./ADR/) (none yet)
+- **ADRs**: [ADR-001](./ADR/ADR-001-cursor-granularity-boundary-fix.md)
 - **Connector Reference**: Source 14 (Claude Team Plan) in `docs/CONNECTORS_REFERENCE.md`
 - **AI Tool domain**: [docs/components/connectors/ai/](../../)

@@ -31,6 +31,7 @@
   - [REC-IR-01: ClickHouse atomicity for merge/split (Phase 3+)](#rec-ir-01-clickhouse-atomicity-for-mergesplit-phase-3)
   - [REC-IR-02: bootstrap_inputs incremental watermark (Phase 2)](#rec-ir-02-bootstrapinputs-incremental-watermark-phase-2)
   - [REC-IR-03: Shared unmapped table for all domains — RESOLVED](#rec-ir-03-shared-unmapped-table-for-all-domains--resolved)
+  - [REC-IR-04: Temporary insight\_tenant\_id derivation via sipHash128 (Phase 1)](#rec-ir-04-temporary-insight_tenant_id-derivation-via-siphash128-phase-1)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -1194,6 +1195,23 @@ BootstrapJob tracks "last run" position to process only new `bootstrap_inputs` r
 **Decision**: Use a single shared `unmapped` table (owned by IR domain) for both alias-level and person-attribute-level unmapped observations. See [ADR-0001: Shared unmapped table](../../person/specs/ADR/0001-shared-unmapped-table.md) (`cpt-ir-adr-shared-unmapped`) for full rationale.
 
 Reason: identical structure (both carry `insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `alias_type`, `alias_value`) and common data origin (`bootstrap_inputs`). Differentiation by `alias_type` values is sufficient — identity alias types (`email`, `username`, `employee_id`, `platform_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.). No separate `person_unmapped` table needed.
+
+### REC-IR-04: Temporary `insight_tenant_id` derivation via sipHash128 (Phase 1)
+
+Phase 1 seed models derive `insight_tenant_id` (UUID) from the Bronze string `tenant_id` using `UUIDNumToString(sipHash128(coalesce(tenant_id, '')))`. This is a **temporary** deterministic hash that produces a stable UUID from the raw tenant identifier.
+
+**Why temporary**: The PR #55 convention requires `insight_tenant_id` to be a real UUIDv7 foreign key referencing a future `tenants` table. Until that table exists, there is no authoritative UUID to look up, so a deterministic hash ensures:
+- The same Bronze `tenant_id` always produces the same UUID across all seed models.
+- No collision risk within realistic tenant counts (sipHash128 is 128-bit).
+- The value is query-joinable across `persons`, `aliases`, and `bootstrap_inputs`.
+
+**Migration path**: When the `tenants` table is created, replace all `UUIDNumToString(sipHash128(...))` calls with a lookup join (e.g., `JOIN tenants t ON t.external_id = cm.tenant_id`). All affected files are marked with `-- TEMPORARY: sipHash128` comments. Search: `grep -r "TEMPORARY.*sipHash128" src/ingestion/dbt/identity/`.
+
+**Affected files** (Phase 1 seed):
+- `seed_persons_from_cursor.sql`, `seed_persons_from_claude_team.sql` — compute the hash
+- `seed_aliases_from_cursor.sql`, `seed_aliases_from_claude_team.sql` — use it in tenant-scoped JOINs
+- `seed_bootstrap_inputs_from_cursor.sql`, `seed_bootstrap_inputs_from_claude_team.sql` — compute the hash
+- `scripts/adhoc/seed_from_cursor_manual.sql`, `scripts/adhoc/seed_from_claude_team_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
 
 ## 6. Traceability
 

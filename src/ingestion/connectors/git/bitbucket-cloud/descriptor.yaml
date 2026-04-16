@@ -1,0 +1,9 @@
+name: bitbucket-cloud
+version: "1.0"
+type: cdk
+schedule: "0 2 * * *"
+workflow: sync
+dbt_select: "tag:bitbucket-cloud+"
+
+connection:
+  namespace: "bronze_bitbucket_cloud"

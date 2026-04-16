@@ -336,7 +336,7 @@ Provides pipeline scheduling, task dependency management, retry handling, and ex
 - Schedule pipeline CronWorkflows with cron expressions
 - Trigger Airbyte syncs via HTTP POST to Airbyte API
 - Poll for sync completion and check status
-- Trigger dbt runs via container steps (`ghcr.io/dbt-labs/dbt-clickhouse`)
+- Trigger dbt runs via container steps (`insight-toolbox`)
 - Enforce task ordering via DAG templates (sync before transform)
 - Retry failed tasks with configurable backoff (`retryStrategy`)
 - Provide Argo UI for monitoring and manual execution
@@ -689,9 +689,9 @@ Argo UI uses `--auth-mode=client` in production — authentication via K8s Servi
 
 3. **No inline credential fallback.** Scripts do not fall back to reading credentials from tenant YAML. If a Secret is missing, the connector is skipped with an error.
 
-4. **Destination password sync.** `apply-connections.sh` always updates the ClickHouse destination password from the K8s Secret on every run. This ensures password rotation takes effect without recreating connections.
+4. **Destination password sync.** `airbyte-toolkit/connect.sh` always updates the ClickHouse destination password from the K8s Secret on every run. This ensures password rotation takes effect without recreating connections.
 
-5. **Password rotation procedure.** Update Secret → apply to cluster → restart ClickHouse (Deployment uses `strategy: Recreate` to avoid PVC ReadWriteOnce conflicts) → run `apply-connections.sh` to sync Airbyte destination password.
+5. **Password rotation procedure.** Update Secret → apply to cluster → restart ClickHouse (Deployment uses `strategy: Recreate` to avoid PVC ReadWriteOnce conflicts) → run `airbyte-toolkit/connect.sh` to sync Airbyte destination password.
 
 ### 4.2 Local Development (Kind K8s Cluster)
 
@@ -699,7 +699,7 @@ All services run inside a Kind K8s cluster (`airbyte-abctl`):
 - Airbyte installed via `abctl local install`
 - Argo Workflows installed via Helm chart
 - ClickHouse deployed via K8s manifests (Deployment + Service + PVC + ConfigMap)
-- dbt runs as Argo container steps (`ghcr.io/dbt-labs/dbt-clickhouse`)
+- dbt runs as Argo container steps (`insight-toolbox`)
 
 KUBECONFIG: `~/.kube/kind-ingestion`
 

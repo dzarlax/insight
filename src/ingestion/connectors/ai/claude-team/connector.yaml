@@ -63,7 +63,7 @@ definitions:
     page_token_option:
       type: RequestOption
       inject_into: request_parameter
-      field_name: after_id
+      field_name: page
 
 streams:
   # ── Stream 1: claude_team_users (full refresh, cursor pagination) ──
@@ -265,7 +265,7 @@ streams:
         datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%d'))[:10] }}"
         datetime_format: "%Y-%m-%d"
       step: P1D
-      cursor_granularity: P1D
+      cursor_granularity: PT1S
       start_time_option:
         type: RequestOption
         field_name: starting_at

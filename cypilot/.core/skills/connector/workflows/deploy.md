@@ -11,12 +11,14 @@ Registers connector in Airbyte, creates connections, and sets up Argo workflows.
 
 - Connector package validated (`/connector validate <name>` passed)
 - **Local testing completed**: `source.sh check`, `discover`, `read` all pass
-- **Schema generated from real data**: `./scripts/generate-schema.sh <name>` run, schemas in manifest
+- **Schema generated from real data**: `./airbyte-toolkit/generate-schema.sh <name>` run, schemas in manifest
 - **All cursor fields exist in schema** (prevents ClickHouse destination NPE)
 - Tenant config (`connections/<tenant>.yaml` with `tenant_id`) and K8s Secrets with credentials
 - Cluster running (`./up.sh` completed)
 
-## Phase 1: Upload Manifest
+## Phase 1: Register Connector
+
+### Nocode (declarative YAML)
 
 ```bash
 ./update-connectors.sh
@@ -25,9 +27,19 @@ Registers connector in Airbyte, creates connections, and sets up Argo workflows.
 This updates the existing definition in Airbyte in-place (same definition ID).
 If the connector is new, it creates a builder project and publishes a new definition.
 
+### CDK (Python)
+
+```bash
+./airbyte-toolkit/build-connector.sh {category}/{name}
+```
+
+This builds the Docker image, loads it into Kind, and registers/updates the Airbyte source definition.
+`update-connectors.sh --all` also auto-detects CDK connectors and delegates to `build-connector.sh`.
+
 **Important**:
-- `upload-manifests.sh` updates definitions in-place — no duplicate IDs
-- After upload, definition ID is saved to per-tenant state (`connections/.state/<tenant>.yaml`)
+- `airbyte-toolkit/register.sh` updates definitions in-place — no duplicate IDs
+- `register.sh` auto-detects connector type from `descriptor.yaml` (`type: cdk` vs `nocode`)
+- After upload, definition ID is saved to toolkit state (`airbyte-toolkit/state.yaml`)
 - All subsequent scripts read IDs from state, not by name lookup
 
 ## Phase 2: Create/Update Connections
@@ -46,7 +58,7 @@ This script is idempotent — it handles both creation and updates:
 
 | Pitfall | How handled |
 |---------|-------------|
-| Duplicate definitions | Fixed: upload-manifests.sh updates in-place (same ID) |
+| Duplicate definitions | Fixed: airbyte-toolkit/register.sh updates in-place (same ID) |
 | Stale schema after manifest update | Detects definition change in state, recreates source → fresh discover |
 | Missing cursor field in schema | Discover from updated definition includes all fields |
 | `full_refresh` + `overwrite` = NPE | Always uses `append_dedup` for all streams |
@@ -54,10 +66,10 @@ This script is idempotent — it handles both creation and updates:
 
 ### Airbyte State
 
-All resource IDs are stored per-tenant in `connections/.state/<tenant>.yaml` (gitignored).
-Scripts read/write these files automatically. Each tenant has its own isolated state.
+All resource IDs are stored in `airbyte-toolkit/state.yaml` (gitignored).
+Scripts read/write this file automatically.
 
-On host: per-tenant YAML files. In K8s: ConfigMap `airbyte-state`.
+On host: `airbyte-toolkit/state.yaml`. In K8s: ConfigMap `airbyte-state` in namespace `data`.
 
 ## Phase 3: Create Workflows
 
@@ -85,8 +97,15 @@ If sync fails, get detailed Airbyte logs:
 
 Common sync failures:
 - **NPE getCursor**: cursor field missing from schema → re-run `generate-schema.sh`, update manifest, re-deploy
-- **Destination check failed**: ClickHouse database doesn't exist → `apply-connections.sh` creates it
+- **Destination check failed**: ClickHouse database doesn't exist → `airbyte-toolkit/connect.sh` creates it
 - **Source config validation error**: definition mismatch → re-upload manifest, re-run `update-connections.sh`
+- **Breaking schema change** (e.g., renamed primary key): reset and re-deploy:
+  ```bash
+  ./airbyte-toolkit/reset-connector.sh <name> <tenant>
+  ./airbyte-toolkit/build-connector.sh <path>          # CDK
+  ./scripts/apply-connections.sh <tenant>
+  ./run-sync.sh <name> <tenant>
+  ```
 
 ## Phase 5: Verify Data
 

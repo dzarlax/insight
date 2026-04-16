@@ -133,6 +133,8 @@ streams:
     name: wiki_spaces
     primary_key:
       - unique_key
+    supported_sync_modes:
+      - full_refresh
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -184,6 +186,9 @@ streams:
     name: wiki_pages
     primary_key:
       - unique_key
+    supported_sync_modes:
+      - full_refresh
+      - incremental
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -253,6 +258,8 @@ streams:
     name: wiki_page_versions
     primary_key:
       - unique_key
+    supported_sync_modes:
+      - full_refresh
     schema_loader:
       type: InlineSchemaLoader
       schema:

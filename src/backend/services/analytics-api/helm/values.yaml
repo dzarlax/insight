@@ -1,0 +1,56 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/cyberfabric/insight-analytics-api
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8081
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Use a pre-provisioned Secret instead of creating one from values below.
+# If set, secret.yaml is skipped entirely.
+existingSecret: ""
+
+# Database connections
+database:
+  # MariaDB connection URL
+  url: "mysql://insight:insight-pass@insight-mariadb:3306/analytics"
+
+clickhouse:
+  url: "http://insight-clickhouse:8123"
+  database: "insight"
+  user: "insight"
+  password: "insight-pass"
+
+# Identity Resolution service
+identityResolution:
+  url: "http://insight-identity-resolution:8082"
+
+# Redis for caching
+redis:
+  url: "redis://insight-redis-master:6379"
+
+# Health probes
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5

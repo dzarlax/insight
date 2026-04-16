@@ -13,7 +13,7 @@ ingress:
   enabled: true
   className: nginx
   annotations: {}
-  host: insight.example.com
+  host: ""              # Leave empty for local (no host-based routing)
   tls:
     enabled: false
     secretName: ""
@@ -28,24 +28,36 @@ resources:
 
 # OIDC configuration (required for production)
 oidc:
-  issuerUrl: ""           # e.g., https://dev-12345.okta.com/oauth2/default
+  issuer: ""              # e.g., https://dev-12345.okta.com/oauth2/default
   audience: ""            # e.g., api://insight
   clientId: ""            # Frontend (public) OIDC client ID
   redirectUri: ""         # e.g., https://insight.example.com/callback
   # jwksUrl: ""           # Override if JWKS URL differs from {issuer}/v1/keys
+
+# ClickHouse connection
+clickhouse:
+  url: "http://clickhouse.data.svc.cluster.local:8123"
+  database: "gold"
 
 # Set to true to disable authentication (local development only)
 authDisabled: false
 
 # API Gateway settings
 gateway:
-  prefixPath: "/api/v1"
+  prefixPath: "/api"
   corsEnabled: true
   enableDocs: false     # Set true for dev; disabled by default for production
   rateLimit:
     rps: 100
     burst: 50
     inFlight: 32
+
+# Reverse proxy routes to downstream services
+proxy:
+  routes:
+    - prefix: "/analytics"
+      upstream: "http://analytics-api-analytics-api:8081"
+      public: false
 
 # Health probes
 # Provided by cyberfabric api-gateway module:

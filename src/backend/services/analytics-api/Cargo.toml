@@ -1,0 +1,35 @@
+[package]
+name = "analytics-api"
+version = "0.1.0"
+description = "Analytics API — read-only query service over predefined ClickHouse metrics"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+insight-clickhouse = { workspace = true }
+
+axum = { workspace = true }
+tower-http = { workspace = true }
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+reqwest = { workspace = true }
+redis = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+figment = { workspace = true }

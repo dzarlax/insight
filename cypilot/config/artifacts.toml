@@ -123,6 +123,16 @@ path = "docs/components/connectors/hr-directory/ldap.md"
 name = "LDAP Connector Specification"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/task-tracking/silver/specs/PRD.md"
+name = "Task Tracking Silver Layer PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/task-tracking/silver/specs/DESIGN.md"
+name = "Task Tracking Silver Layer Design"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/connectors/task-tracking/youtrack.md"
 name = "YouTrack Connector Specification"
@@ -131,6 +141,16 @@ name = "YouTrack Connector Specification"
 kind = "DESIGN"
 path = "docs/components/connectors/task-tracking/jira.md"
 name = "Jira Connector Specification"
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/connectors/task-tracking/jira/specs/PRD.md"
+name = "Jira Connector PRD"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/connectors/task-tracking/jira/specs/DESIGN.md"
+name = "Jira Connector Design"
 
 [[systems.artifacts]]
 kind = "PRD"
@@ -243,6 +263,11 @@ path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-002-api-response-
 name = "ADR-002: API response structure — nested records and field mapping"
 
 [[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/ai/claude-api/specs/ADR/ADR-003-cursor-granularity-boundary-fix.md"
+name = "ADR-003: Cursor granularity PT1S to avoid empty date-boundary windows"
+
+[[systems.artifacts]]
 kind = "PRD"
 path = "docs/components/connectors/ai/claude-team/specs/PRD.md"
 name = "Claude Team Plan Connector PRD"
@@ -251,6 +276,11 @@ name = "Claude Team Plan Connector PRD"
 kind = "DESIGN"
 path = "docs/components/connectors/ai/claude-team/specs/DESIGN.md"
 name = "Claude Team Plan Connector Design"
+
+[[systems.artifacts]]
+kind = "ADR"
+path = "docs/components/connectors/ai/claude-team/specs/ADR/ADR-001-cursor-granularity-boundary-fix.md"
+name = "ADR-001: Cursor granularity PT1S for consistency with claude-api"
 
 [[systems.artifacts]]
 kind = "PRD"
@@ -357,6 +387,18 @@ traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "PRD"
+path = "docs/components/airbyte-toolkit/specs/PRD.md"
+name = "Airbyte Toolkit PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/airbyte-toolkit/specs/DESIGN.md"
+name = "Airbyte Toolkit Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
 path = "docs/components/backend/specs/PRD.md"
 name = "Backend PRD"
 traceability = "DOCS-ONLY"
@@ -378,6 +420,8 @@ kind = "DESIGN"
 path = "docs/components/backend/specs/DESIGN.md"
 name = "Backend Architecture"
 traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "ADR"
 path = "docs/shared/glossary/ADR/0001-uuidv7-primary-key.md"
 name = "ADR-0001: UUIDv7 as Universal Primary Key"
@@ -391,6 +435,12 @@ name = "ADR-0002: Database Field Naming and Type Conventions"
 kind = "ADR"
 path = "docs/shared/glossary/ADR/0003-insight-prefixed-tenant-id.md"
 name = "ADR-0003: Use insight_tenant_id Instead of tenant_id"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "src/backend/services/analytics-api/specs/DESIGN.md"
+name = "Analytics API Design"
+traceability = "DOCS-ONLY"
 
 [[systems]]
 name = "Orchestrator"
@@ -466,3 +516,4 @@ name = "Org-Chart Domain Design"
 kind = "PRD"
 path = "docs/domain/org-chart/specs/PRD.md"
 name = "Org-Chart Domain PRD"
+traceability = "DOCS-ONLY"

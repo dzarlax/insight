@@ -1,6 +1,6 @@
 //! Auth info module — public endpoint that serves OIDC configuration to the frontend.
 //!
-//! `GET /auth/config` — no authentication required.
+//! `GET /v1/auth/config` — no authentication required.
 //!
 //! Returns the OIDC provider details the frontend needs to initiate the
 //! Authorization Code flow with PKCE (redirect to login page, token exchange).
@@ -123,7 +123,7 @@ impl RestApiCapability for AuthInfoModule {
             async move { Json(resp) }
         };
 
-        let router = OperationBuilder::new(Method::GET, "/auth/config")
+        let router = OperationBuilder::new(Method::GET, "/v1/auth/config")
             .summary("OIDC configuration for frontend")
             .description("Returns OIDC provider details for the Authorization Code flow with PKCE. No authentication required.")
             .public()
@@ -132,7 +132,7 @@ impl RestApiCapability for AuthInfoModule {
             .handler(handler)
             .register(router, openapi);
 
-        tracing::info!("registered public endpoint: GET /auth/config");
+        tracing::info!("registered public endpoint: GET /v1/auth/config");
         Ok(router)
     }
 }

@@ -109,3 +109,107 @@ models:
         description: "Tenant identifier"
         tests:
           - not_null
+
+  - name: class_git_repositories
+    description: "Unified git repositories from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_repository_branches
+    description: "Unified git repository branches from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_commits
+    description: "Unified git commits from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_file_changes
+    description: "Unified git file changes from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_pull_requests
+    description: "Unified git pull requests from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_pull_requests_reviewers
+    description: "Unified git pull request reviewers from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_pull_requests_comments
+    description: "Unified git pull request comments from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+
+  - name: class_git_pull_requests_commits
+    description: "Unified git pull request commits from all sources (GitHub, Bitbucket, GitLab)"
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
