@@ -378,6 +378,6 @@ spec:
 
 metadata:
   autoImportSchema:
-    wiki_spaces: true
-    wiki_pages: true
-    wiki_page_versions: true
+    wiki_spaces: false
+    wiki_pages: false
+    wiki_page_versions: false
