@@ -1,5 +1,7 @@
 replicaCount: 1
 
+podAnnotations: {}
+
 image:
   repository: ghcr.io/cyberfabric/insight-analytics-api
   tag: "latest"

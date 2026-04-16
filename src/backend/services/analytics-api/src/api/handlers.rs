@@ -14,6 +14,7 @@ use crate::domain::metric::{
     CreateMetricRequest, Metric, MetricSummary, TableColumn, UpdateMetricRequest,
 };
 use crate::domain::query::{PageInfo, QueryRequest, QueryResponse};
+use crate::domain::threshold;
 use crate::domain::threshold::{
     CreateThresholdRequest, Threshold, UpdateThresholdRequest,
 };
