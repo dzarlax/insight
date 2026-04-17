@@ -121,7 +121,8 @@ impl MigrationTrait for Migration {
         for (hex_id, name, description, query_ref) in SEEDS {
             db.execute_unprepared(&format!(
                 "INSERT INTO metrics (id, insight_tenant_id, name, description, query_ref, is_enabled) \
-                 VALUES (UNHEX('{hex_id}'), UNHEX('{ZERO_TENANT}'), '{name}', '{description}', '{qr}', 1)",
+                 VALUES (UNHEX('{hex_id}'), UNHEX('{ZERO_TENANT}'), '{name}', '{description}', '{qr}', 1) \
+                 ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), query_ref=VALUES(query_ref)",
                 qr = query_ref.replace('\'', "''"),
             ))
             .await?;
