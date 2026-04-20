@@ -12,6 +12,18 @@ from typing import Any, Iterable, Mapping, MutableMapping, Optional
 
 import requests
 from airbyte_cdk.sources.streams.http import HttpStream
+from airbyte_cdk.sources.streams.http.error_handlers import (
+    ErrorHandler,
+    HttpStatusErrorHandler,
+)
+from airbyte_cdk.sources.streams.http.error_handlers.default_error_mapping import (
+    DEFAULT_ERROR_MAPPING,
+)
+from airbyte_cdk.sources.streams.http.error_handlers.response_models import (
+    ErrorResolution,
+    ResponseAction,
+)
+from airbyte_cdk.models import FailureType
 
 from source_bitbucket_cloud.auth import auth_headers
 
@@ -38,6 +50,11 @@ class BitbucketCloudStream(HttpStream, ABC):
     url_base = "https://api.bitbucket.org/2.0/"
     primary_key = "unique_key"
     page_size = 100
+
+    # Sub-streams that iterate per-PR or per-commit slices set this True so
+    # an orphaned 404 (PR references deleted branch, commit diffstat gone)
+    # skips the one slice instead of failing the whole stream.
+    ignore_404: bool = False
 
     def __init__(
         self,
@@ -117,6 +134,23 @@ class BitbucketCloudStream(HttpStream, ABC):
                 f"{self.name}: retryable {response.status_code} on {response.url}"
             )
         return retry
+
+    def get_error_handler(self) -> Optional[ErrorHandler]:
+        if not self.ignore_404:
+            return super().get_error_handler()
+        mapping = {
+            **DEFAULT_ERROR_MAPPING,
+            404: ErrorResolution(
+                response_action=ResponseAction.IGNORE,
+                failure_type=FailureType.transient_error,
+                error_message="404: resource missing, skipping slice",
+            ),
+        }
+        return HttpStatusErrorHandler(
+            logger=_logger,
+            error_mapping=mapping,
+            max_retries=self.max_retries,
+        )
 
     def backoff_time(self, response: requests.Response) -> Optional[float]:
         if response.status_code == 429:

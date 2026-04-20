@@ -34,6 +34,7 @@ class FileChangesStream(HttpSubStream, BitbucketCloudStream):
     name = "file_changes"
     cursor_field = "committed_date"
     state_checkpoint_interval = 500
+    ignore_404 = True
 
     def __init__(
         self,

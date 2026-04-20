@@ -55,6 +55,7 @@ class PRCommentsStream(HttpSubStream, BitbucketCloudStream):
     name = "pull_request_comments"
     cursor_field = "pull_request_updated_on"
     state_checkpoint_interval = 500
+    ignore_404 = True
 
     def _path(self, stream_slice: Optional[Mapping[str, Any]] = None) -> str:
         s = stream_slice or {}
