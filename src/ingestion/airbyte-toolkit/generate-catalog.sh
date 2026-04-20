@@ -79,11 +79,7 @@ for line in sys.stdin:
         source_pk = entry.get('source_defined_primary_key', [])
 
         sync_mode = 'incremental' if 'incremental' in supported else 'full_refresh'
-        # Bronze is always plain append; dedup happens in silver via unique_key.
-        # Destination-side dedup (append_dedup/overwrite_dedup) buffers records
-        # in a temp table until stream COMPLETE, which OOMs big streams and
-        # drops all data on mid-stream pod death.
-        dest_mode = 'append'
+        dest_mode = 'append_dedup' if sync_mode == 'incremental' else 'overwrite'
 
         stream_entry = {
             'stream': {
