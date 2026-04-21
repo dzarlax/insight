@@ -648,6 +648,12 @@ K8s Cluster
 │   └── Argo Controller (workflow execution)
 └── namespace: data
     └── ClickHouse (single-node or cluster)
+├── namespace: insight
+│   ├── MariaDB (metric definitions, service metadata)
+│   ├── Analytics API (Rust/Axum)
+│   ├── Identity Resolution (Rust stub)
+│   ├── API Gateway (Rust/Axum, OIDC, proxy)
+│   └── Frontend (SPA, nginx)
 ```
 
 Key deployment decisions:
@@ -656,6 +662,10 @@ Key deployment decisions:
 - External database for Airbyte metadata (PostgreSQL required by Airbyte, managed internally by abctl)
 - Helm charts: Airbyte via `abctl`, Argo via `argo/argo-workflows`
 - ClickHouse deployed via K8s manifests (`src/ingestion/k8s/clickhouse/`)
+- ClickHouse health probes use HTTP GET `/ping` endpoint (not `clickhouse-client` exec — avoids CLI flag parsing issues with auto-generated passwords)
+- MariaDB deployed via Bitnami Helm chart (`helmfile/values/mariadb.yaml`); `up.sh` installs it idempotently before backend services
+- CDK connector build script (`airbyte-toolkit/build-connector.sh`) uses `CLUSTER_NAME` env var (default `insight`) for Kind image loading — not hardcoded
+- Airbyte port-forward uses `nohup ... & disown` to avoid blocking the terminal
 - All credentials managed via Kubernetes Secrets (see §4.1.1)
 - Service access via NodePort: Airbyte (8000), Argo UI (30500), ClickHouse (30123)
 
@@ -665,8 +675,9 @@ All infrastructure and connector credentials are stored in Kubernetes Secrets. N
 
 | Secret | Namespace | Purpose | Required Keys | Created by |
 |--------|-----------|---------|---------------|------------|
-| `clickhouse-credentials` | `data` + `argo` | ClickHouse `default` user password | `username`, `password` | `secrets/apply.sh` |
+| `clickhouse-credentials` | `data` + `argo` + `insight` | ClickHouse `default` user password | `username`, `password` | `src/ingestion/up.sh` (auto-generated) |
 | `airbyte-auth-secrets` | `airbyte` | Airbyte internal auth | `instance-admin-password`, `instance-admin-client-id`, `instance-admin-client-secret`, `jwt-signature-secret` | Helm chart (auto) |
+| `insight-mariadb` | `insight` | MariaDB root + app credentials | `mariadb-root-password`, `mariadb-password` | Bitnami Helm chart (auto) |
 | `insight-{connector}-{source-id}` | `data` | Per-connector credentials (see [ADR-0003](ADR/0003-k8s-secrets-credentials.md)) | Connector-specific (e.g. `azure_client_id`, `azure_client_secret`) | `secrets/apply.sh` |
 
 Argo UI uses `--auth-mode=client` in production — authentication via K8s ServiceAccount Bearer tokens, no Secret required.
@@ -695,21 +706,44 @@ Argo UI uses `--auth-mode=client` in production — authentication via K8s Servi
 
 ### 4.2 Local Development (Kind K8s Cluster)
 
-All services run inside a Kind K8s cluster (`airbyte-abctl`):
-- Airbyte installed via `abctl local install`
-- Argo Workflows installed via Helm chart
+All services run inside a Kind K8s cluster (`insight`):
+- Airbyte installed via Helm chart (`airbyte/airbyte`)
+- Argo Workflows installed via Helm chart (`argo/argo-workflows`)
 - ClickHouse deployed via K8s manifests (Deployment + Service + PVC + ConfigMap)
+- MariaDB installed via Bitnami Helm chart
+- Backend services (Analytics API, Identity Resolution, API Gateway) deployed via per-service Helm charts
+- Frontend deployed via Helm chart (image from `ghcr.io/cyberfabric/insight-front`)
 - dbt runs as Argo container steps (`insight-toolbox`)
 
-KUBECONFIG: `~/.kube/kind-ingestion`
+KUBECONFIG: `~/.kube/insight.kubeconfig`
 
-Startup: `./up.sh` — installs Airbyte, deploys ClickHouse, installs Argo, applies WorkflowTemplates, initializes connections.
+#### Startup scripts
+
+| Script | Purpose |
+|--------|---------|
+| `./up.sh` | Full stack: creates Kind cluster, deploys all services (ingestion + MariaDB + backend + frontend). Uses `.env.local` for configuration. Idempotent — safe to re-run. |
+| `./restart.sh` | Quick restart after WSL/Docker crash: restarts existing Kind cluster and scales pods back to 1. Falls back to full `./up.sh` + `./init.sh` if cluster is gone. Cleans up stale containers and stuck Helm releases. |
+| `./down.sh` | Graceful stop: scales all pods to 0, stops Kind container. Data preserved — `./restart.sh` brings everything back. |
+| `./init.sh` | Post-startup init: applies secrets, runs ClickHouse migrations, registers connectors, creates Airbyte connections. |
+| `src/ingestion/sync-all.sh` | Trigger Airbyte sync for all connections. Reads connection IDs from state, calls Airbyte API. Use after `./init.sh` to start first data load, or anytime to re-sync all sources. |
+
+**First-time setup**:
+1. Copy `.env.local.example` → `.env.local`
+2. Copy connector secret examples → fill credentials (`src/ingestion/secrets/connectors/`)
+3. `./up.sh` — full stack deployment
+4. `./init.sh` — databases, connectors, connections
+5. `cd src/ingestion && ./sync-all.sh` — trigger first Airbyte sync for all connections
+
+**After WSL/Docker crash**: `./restart.sh` — one command, restores full state.
+
+**Environment support**: `./up.sh --env <name>` loads `.env.<name>` config. Supports `local` (Kind) and `remote` (external kubeconfig) modes.
 
 This enables:
 - Testing connector registration and sync execution
-- Running full extract -> transform pipeline via Argo DAG workflows
+- Running full extract → transform pipeline via Argo DAG workflows
 - Monitoring workflows via Argo UI
 - Validating dbt models against real data
+- Full backend API testing with OIDC disabled locally
 
 ### 4.3 Ultra-Light Connector Debugging
 

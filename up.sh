@@ -183,11 +183,32 @@ if [[ "$COMPONENT" == "all" || "$COMPONENT" == "ingestion" ]]; then
   ENV="$ENV_NAME" "$ROOT_DIR/src/ingestion/up.sh"
 fi
 
-# ─── App-level infra (redis) ──────────────────────────────────────────────
-# Plain Deployment + Service. Cache only — no persistence, no auth.
-# (Using redis:7-alpine from Docker Hub; bitnami/redis chart images moved
-# behind a paywall in 2025 and no longer pull freely.)
+# ─── App-level infra (MariaDB, Redis) ────────────────────────────────────
 if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "infra" ]]; then
+  # MariaDB — required by Analytics API for metric definitions
+  MARIADB_ROOT_PASSWORD="${MARIADB_ROOT_PASSWORD:-root-local}"
+  MARIADB_DATABASE="${MARIADB_DATABASE:-analytics}"
+  MARIADB_USER="${MARIADB_USER:-insight}"
+  MARIADB_PASSWORD="${MARIADB_PASSWORD:-insight-pass}"
+  if ! helm status insight-mariadb -n "$NAMESPACE" &>/dev/null; then
+    echo "=== Deploying MariaDB ==="
+    helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
+    helm repo update bitnami >/dev/null
+    helm upgrade --install insight-mariadb bitnami/mariadb \
+      --namespace "$NAMESPACE" --version "~20" \
+      -f helmfile/values/mariadb.yaml \
+      --set auth.rootPassword="$MARIADB_ROOT_PASSWORD" \
+      --set auth.database="$MARIADB_DATABASE" \
+      --set auth.username="$MARIADB_USER" \
+      --set auth.password="$MARIADB_PASSWORD" \
+      --wait --timeout 5m
+  else
+    echo "=== MariaDB already deployed ==="
+  fi
+
+  # Plain Deployment + Service. Cache only — no persistence, no auth.
+  # (Using redis:7-alpine from Docker Hub; bitnami/redis chart images moved
+  # behind a paywall in 2025 and no longer pull freely.)
   if [[ "${DEPLOY_REDIS:-false}" == "true" ]]; then
     echo "=== Deploying Redis ==="
     kubectl apply -n "$NAMESPACE" -f - <<'EOF'
@@ -417,7 +438,8 @@ fi
 if [[ "$CLUSTER_MODE" == "local" && ("$COMPONENT" == "all" || "$COMPONENT" == "ingestion") ]]; then
   echo "=== Starting Airbyte port-forward ==="
   pkill -f 'port-forward.*airbyte' 2>/dev/null || true
-  kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8001:8001 >/dev/null 2>&1 &
+  nohup kubectl -n airbyte port-forward svc/airbyte-airbyte-server-svc 8001:8001 >/dev/null 2>&1 &
+  disown
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────
