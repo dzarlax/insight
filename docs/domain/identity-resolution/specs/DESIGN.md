@@ -1359,7 +1359,7 @@ Phase 1 seed and connector models derive `insight_tenant_id` (UUID) and `insight
 **Why temporary**: The PR #55 convention requires `insight_tenant_id` / `insight_source_id` to be real UUIDv7 foreign keys referencing future `tenants` / `sources` tables. Until those exist, the deterministic hash ensures:
 - The same Bronze identifier always produces the same UUID across all models.
 - No collision risk within realistic tenant counts (sipHash128 is 128-bit).
-- The value is query-joinable across `persons`, `aliases`, `identity_inputs`, and `identity_inputs`.
+- The value is query-joinable across `persons`, `account_person_map`, `aliases`, and `identity_inputs`.
 
 **Migration path**: When `tenants` / `sources` tables are created, replace all `toUUID(UUIDNumToString(sipHash128(...)))` calls with a lookup join (e.g., `JOIN tenants t ON t.external_id = cm.tenant_id`). All affected files are marked with `-- TEMPORARY: sipHash128` comments. Search: `grep -r "TEMPORARY.*sipHash128" src/ingestion/`.
 

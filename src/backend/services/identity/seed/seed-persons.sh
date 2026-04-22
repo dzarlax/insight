@@ -67,12 +67,24 @@ except OSError:
 if [[ "$MARIADB_HOST" == "localhost" || "$MARIADB_HOST" == "127.0.0.1" ]] \
     && ! _port_open; then
   echo "  Starting MariaDB port-forward..."
-  nohup kubectl -n insight port-forward svc/insight-mariadb "${MARIADB_PORT}:3306" >/dev/null 2>&1 &
-  disown
+  kubectl -n insight port-forward svc/insight-mariadb "${MARIADB_PORT}:3306" >/dev/null 2>&1 &
+  _PF_PID=$!
+  # Make sure we do not leave an orphan port-forward if the seed exits
+  # for any reason (Ctrl-C, Python error, successful completion).
+  trap 'kill $_PF_PID 2>/dev/null || true' EXIT
+  _ready=0
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    _port_open && break
+    if _port_open; then
+      _ready=1
+      break
+    fi
     sleep 1
   done
+  if [[ "$_ready" -ne 1 ]]; then
+    echo "ERROR: MariaDB port-forward did not become ready within 10s." >&2
+    echo "  Check: kubectl -n insight get pods -l app.kubernetes.io/name=mariadb" >&2
+    exit 1
+  fi
 fi
 
 # -- Run seed -------------------------------------------------------------
