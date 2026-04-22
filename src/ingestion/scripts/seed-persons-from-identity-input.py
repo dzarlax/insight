@@ -77,7 +77,7 @@ def ch_query(sql: str) -> list[dict]:
 def get_mariadb_conn():
     """Connect to MariaDB. Requires pymysql or mysql-connector-python."""
     mariadb_url = os.environ.get(
-        "MARIADB_URL", "mysql://insight:insight-pass@localhost:3306/analytics"
+        "MARIADB_URL", "mysql://insight:insight-pass@localhost:3306/identity"
     )
     # Parse mysql://user:pass@host:port/db
     # seed-persons.sh URL-encodes user/password via urllib.parse.quote() so
@@ -90,7 +90,7 @@ def get_mariadb_conn():
     password = unquote(parsed.password) if parsed.password else ""
     host = parsed.hostname or "localhost"
     port = parsed.port or 3306
-    database = parsed.path.lstrip("/") or "analytics"
+    database = parsed.path.lstrip("/") or "identity"
 
     try:
         import pymysql

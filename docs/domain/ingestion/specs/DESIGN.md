@@ -831,23 +831,26 @@ migration authors.
 
 #### 4.4.3 Coexistence with `seaql_migrations`
 
-The `analytics` MariaDB database hosts **two independent migration
-trackers**:
+The same Bitnami MariaDB Helm release hosts **two separate databases**
+with **two independent migration trackers**:
 
-| Tracker | Owner | Manages |
-|---|---|---|
-| `seaql_migrations` | `analytics-api` backend (SeaORM) | backend-owned tables: `metrics`, `thresholds`, `table_columns`, seed rows |
-| `schema_migrations` | ingestion/identity/person/org-chart (our runner) | all non-backend tables: `persons`, future identity-domain tables, etc. |
+| Database | Owner | Tracker | Tables |
+|---|---|---|---|
+| `analytics` | `analytics-api` backend (SeaORM) | `seaql_migrations` (in `analytics`) | `metrics`, `thresholds`, `table_columns`, seed rows |
+| `identity` | identity-resolution / person / org-chart / ingestion (our runner) | `schema_migrations` (in `identity`) | `persons`, future identity-domain tables |
 
-Both trackers live in the same `analytics` database but never
-reference each other. Version namespaces do not collide:
-`seaql_migrations` uses `m{YYYYMMDD}_{seq}_{name}` (SeaORM default),
-`schema_migrations` uses `{YYYYMMDDHHMMSS}_{name}` (our convention).
-A new MariaDB table is authored under the tracker owned by the
-**domain that specifies the table**.
+The two trackers live in **different databases** on the same MariaDB
+instance and never reference each other. The `identity` database is
+created in `up.sh` immediately after the MariaDB chart is installed
+(`CREATE DATABASE IF NOT EXISTS identity` + `GRANT ALL PRIVILEGES ON
+identity.*` to the app user). `version` namespaces are additionally
+distinct by construction (SeaORM: `m{YYYYMMDD}_{seq}_{name}`, our
+runner: `{YYYYMMDDHHMMSS}_{name}`). A new MariaDB table is authored
+under the tracker owned by the **domain that specifies the table**.
 
 See [ADR-0005](ADR/0005-coexist-with-seaql-migrations.md) for the
-full ownership split, trade-offs, and lifecycle ordering rules.
+full ownership split, database layout, trade-offs, and lifecycle
+ordering rules.
 
 #### 4.4.4 Migrations vs. one-shot data seeds
 

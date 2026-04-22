@@ -95,7 +95,14 @@ DEPLOY_TS="$(date +%s)"
 # the same values, and so an operator-provided override flows through the
 # whole pipeline without editing multiple places.
 MARIADB_ROOT_PASSWORD="${MARIADB_ROOT_PASSWORD:-root-local}"
+# Bitnami chart's "primary" database -- owned by analytics-api
+# (metrics / thresholds / table_columns / seaql_migrations).
 MARIADB_DATABASE="${MARIADB_DATABASE:-analytics}"
+# Identity-resolution-domain database -- owned by this repo's migration
+# runner + seed (persons, schema_migrations, future identity tables).
+# Created post-chart-install via `CREATE DATABASE IF NOT EXISTS`, with
+# GRANT for MARIADB_USER.
+IDENTITY_DB="${IDENTITY_DB:-identity}"
 MARIADB_USER="${MARIADB_USER:-insight}"
 MARIADB_PASSWORD="${MARIADB_PASSWORD:-insight-pass}"
 
@@ -242,6 +249,19 @@ EOF
     --set auth.username="$MARIADB_USER" \
     --wait --timeout 5m
 
+  # Create identity-resolution-domain database and grant access to the
+  # app user. Bitnami chart only creates the single `auth.database`;
+  # additional databases are our responsibility. Uses the MariaDB root
+  # credentials via stdin (no password on command line).
+  echo "=== Ensuring '$IDENTITY_DB' database exists ==="
+  kubectl -n "$NAMESPACE" exec -i insight-mariadb-0 -c mariadb -- \
+    env MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -u root --batch <<SQL
+CREATE DATABASE IF NOT EXISTS \`${IDENTITY_DB}\`
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+GRANT ALL PRIVILEGES ON \`${IDENTITY_DB}\`.* TO '${MARIADB_USER}'@'%';
+FLUSH PRIVILEGES;
+SQL
+
   # Apply MariaDB schema migrations BEFORE backend services start.
   # Analytics-api / identity-resolution read persons and future
   # schema_migrations-owned tables on startup; bringing them up while
@@ -249,7 +269,7 @@ EOF
   if [[ -x "$ROOT_DIR/src/ingestion/scripts/run-migrations-mariadb.sh" ]]; then
     echo "=== Running MariaDB migrations ==="
     MARIADB_USER="$MARIADB_USER" MARIADB_PASSWORD="$MARIADB_PASSWORD" \
-    MARIADB_DB="$MARIADB_DATABASE" MARIADB_NAMESPACE="$NAMESPACE" \
+    MARIADB_DB="$IDENTITY_DB" MARIADB_NAMESPACE="$NAMESPACE" \
       "$ROOT_DIR/src/ingestion/scripts/run-migrations-mariadb.sh"
   fi
 

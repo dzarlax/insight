@@ -22,7 +22,9 @@
 --   and "foo@x.com" would collide and INSERT IGNORE would silently drop
 --   one of them, corrupting the natural observation key.
 --
--- Database: analytics (shared with analytics-api for now)
+-- Database: identity (dedicated to identity-resolution-domain tables;
+-- analytics-api owns its own `analytics` database on the same MariaDB
+-- instance -- see ADR-0005).
 -- Source: docs/domain/identity-resolution/specs/DESIGN.md
 
 CREATE TABLE IF NOT EXISTS persons (

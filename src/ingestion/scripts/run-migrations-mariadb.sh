@@ -28,7 +28,7 @@ export MARIADB_POD="${MARIADB_POD:-insight-mariadb-0}"
 export MARIADB_CONTAINER="${MARIADB_CONTAINER:-mariadb}"
 export MARIADB_USER="${MARIADB_USER:-insight}"
 export MARIADB_PASSWORD="${MARIADB_PASSWORD:-insight-pass}"
-export MARIADB_DB="${MARIADB_DB:-analytics}"
+export MARIADB_DB="${MARIADB_DB:-identity}"
 # Kept for SH-migration convenience (and for downstream seed scripts that
 # still connect host-side via port-forward + pymysql).
 export MARIADB_HOST="${MARIADB_HOST:-localhost}"

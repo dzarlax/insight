@@ -39,7 +39,7 @@ MARIADB_USER="${MARIADB_USER:-insight}"
 MARIADB_PASSWORD="${MARIADB_PASSWORD:-insight-pass}"
 MARIADB_HOST="${MARIADB_HOST:-localhost}"
 MARIADB_PORT="${MARIADB_PORT:-3306}"
-MARIADB_DB="${MARIADB_DB:-analytics}"
+MARIADB_DB="${MARIADB_DB:-identity}"
 export MARIADB_USER MARIADB_PASSWORD MARIADB_HOST MARIADB_PORT MARIADB_DB
 
 _USER_ENC=$(python3 -c 'import os, urllib.parse; print(urllib.parse.quote(os.environ["MARIADB_USER"], safe=""))')

@@ -4,13 +4,13 @@ status: accepted
 date: 2026-04-22
 ---
 
-# ADR-0005 — Coexistence with SeaORM's `seaql_migrations` in the same MariaDB
+# ADR-0005 — Coexistence with SeaORM's `seaql_migrations` in the same MariaDB instance
 
 ## Context
 
 `src/backend/services/analytics-api` (Rust, SeaORM) already manages its
-own schema inside MariaDB `analytics` via SeaORM's built-in migration
-machinery:
+own schema inside MariaDB database `analytics` via SeaORM's built-in
+migration machinery:
 
 - Tracker table: `seaql_migrations(version VARCHAR(255) PK,
   applied_at BIGINT)` — unix-timestamp flavour, not DATETIME.
@@ -25,27 +25,58 @@ machinery:
   seed rows in `metrics`.
 
 This was already in place before ADR-0004 introduced the MariaDB
-migration runner for ingestion/identity/person DDL. The obvious
-question: reuse SeaORM's tracker, or add a second, independent one?
+migration runner for ingestion/identity/person DDL. Two questions:
 
-This ADR records the decision to **coexist** — run both migration
-trackers in the same database, under separate ownership.
+1. Reuse SeaORM's tracker, or add a second, independent one?
+2. Put the new identity-domain tables inside the existing `analytics`
+   database, or in a separate database on the same MariaDB instance?
+
+This ADR records the decision:
+
+- **Separate tracker** per §1 below (two independent migration
+  machineries, same MariaDB instance).
+- **Separate database** per §2 below: identity-resolution-owned
+  tables live in database `identity`; analytics-api-owned tables
+  stay in `analytics`. Both databases coexist on the **same**
+  MariaDB instance.
 
 ## Decision
 
-### 1. Two independent migration trackers in `analytics` DB
+### 1. Two independent migration trackers on the same MariaDB instance
 
-| Tracker | Owner | Author in | Triggered by | Format |
-|---|---|---|---|---|
-| `seaql_migrations` | `analytics-api` backend (SeaORM) | Rust modules with `MigrationTrait` | `Migrator::up()` at service startup | code-first DSL |
-| `schema_migrations` | ingestion/identity/person/org-chart (and any future non-backend domain) | `.sql` / `.sh` files | `run-migrations-mariadb.sh` (from `init.sh`) | SQL files and shell scripts |
+| Tracker | Owner | Database | Author in | Triggered by | Format |
+|---|---|---|---|---|---|
+| `seaql_migrations` | `analytics-api` backend (SeaORM) | `analytics` | Rust modules with `MigrationTrait` | `Migrator::up()` at service startup | code-first DSL |
+| `schema_migrations` | ingestion/identity/person/org-chart (and any future non-backend domain) | `identity` | `.sql` / `.sh` files | `run-migrations-mariadb.sh` (from `init.sh`) | SQL files and shell scripts |
 
-The two trackers **never reference each other**. They are separate
-tables in the same database; the `version` namespaces are distinct by
-construction (SeaORM uses `m{YYYYMMDD}_{seq}_{name}`, our runner uses
-`{YYYYMMDDHHMMSS}_{name}`).
+The two trackers **never reference each other**. They live in
+**different databases** on the same MariaDB instance; the `version`
+namespaces are additionally distinct by construction (SeaORM uses
+`m{YYYYMMDD}_{seq}_{name}`, our runner uses `{YYYYMMDDHHMMSS}_{name}`).
 
-### 2. Single shared `schema_migrations` for all non-backend domains
+### 2. Database layout on the MariaDB instance
+
+| Database | Owner | Tables |
+|---|---|---|
+| `analytics` | `analytics-api` backend | `metrics`, `thresholds`, `table_columns`, `seaql_migrations` |
+| `identity` | identity-resolution / person / org-chart / ingestion | `persons`, `schema_migrations` (ours), future identity-domain tables |
+
+Both databases live on the same Bitnami MariaDB Helm release. The
+`identity` database is created in `up.sh` immediately after the
+MariaDB chart is installed, via `CREATE DATABASE IF NOT EXISTS
+identity` + `GRANT ALL PRIVILEGES ON identity.* TO 'insight'@'%'`
+using the root credentials from the pre-loaded
+`insight-mariadb-auth` Secret. Bitnami's chart only provisions the
+single `auth.database` (`analytics`) — everything else is our
+responsibility.
+
+Analytics-api keeps its pre-existing connection URL pointing at
+`analytics`. Our runner and seed default to `identity` (overridable
+via `MARIADB_DB` env var). Cross-database JOINs are available if
+ever needed (`identity.persons JOIN analytics.metrics ...`) because
+the app user holds privileges on both.
+
+### 3. Single shared `schema_migrations` for all non-backend domains
 
 Identity-resolution, person, org-chart, and any other domain that owns
 a MariaDB table goes through **the same** `schema_migrations` tracker
@@ -63,7 +94,7 @@ Rationale:
   (identity-resolution/DESIGN.md for `persons`, etc.), not in the
   migration tracker. The tracker is an infra artifact.
 
-### 3. Table ownership rule
+### 4. Table ownership rule
 
 A new MariaDB table is registered under the tracker owned by the
 **domain that specifies the table**:
@@ -90,7 +121,7 @@ tables rather than migrating them. Two rules keep this workable:
    `scripts/migrations/mariadb/*.sql`. Drift is caught at runtime as
    SQL errors; there is no compile-time link.
 
-### 4. Lifecycle ordering
+### 5. Lifecycle ordering
 
 `./init.sh` applies migrations in this order:
 

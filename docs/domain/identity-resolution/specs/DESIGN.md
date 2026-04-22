@@ -736,7 +736,7 @@ The aggregated view is `identity_inputs` (plural, matching table-name convention
 
 Field-level identity attribute history for persons, stored in MariaDB. Each row represents one observed field value for a person at a specific point in time — an SCD-style append-only log. Unlike `aliases` (resolved alias→person mapping in ClickHouse), `persons` captures the **history of field changes** that contribute to a person's identity: `email`, `display_name`, `platform_id`, `employee_id`, etc. This is the canonical CRUD-accessible person attribute store used by backend services.
 
-**Database**: MariaDB (`analytics` database, shared with analytics-api for now)
+**Database**: MariaDB, database `identity` (dedicated to identity-resolution-domain tables). Analytics-api owns its own `analytics` database on the same MariaDB instance — see [ADR-0005](../../ingestion/specs/ADR/0005-coexist-with-seaql-migrations.md) §2 for the database layout.
 
 **DDL**: `src/ingestion/scripts/migrations/mariadb/20260421000000_persons.sql`
 
