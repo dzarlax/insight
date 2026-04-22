@@ -149,6 +149,34 @@ scopes the cross-source auto-merge to the initial-bootstrap pass only.
   failure is a legitimate recovery path and must not require
   operator `TRUNCATE`. The lenient rule (no merge in steady-state)
   meets the review concern without blocking operational recovery.
+- **No dedicated mapping table — derive `(tenant, source_type,
+  source_id, source_account) → person_id` by scanning `persons`**
+  (e.g. via a dedicated `alias_type='id'` observation). Rejected
+  for two reasons:
+  1. **The existing observation model does not carry
+     source-account identity uniformly.** Each connector emits its
+     own kind of "id-like" observation -- `employee_id` in BambooHR
+     is a business HR number (`CKSGP0002`, not equal to
+     `source_account_id`); `platform_id` in Cursor / Claude Admin is
+     the source PK (equal to `source_account_id`); `employee_id` in
+     Zoom happens to coincide with `source_account_id` by
+     connector-config quirk, not by design. Unifying this into one
+     `alias_type='id'`-style observation would require connector-
+     level changes across the ingestion layer (dbt macro +
+     per-connector configs) and is outside the scope of PR #214 --
+     those conventions were established upstream in PR #66.
+  2. **Direct-PK lookup in a dedicated mapping table is materially
+     faster** than scanning `persons` by
+     `(tenant, source_type, source_id, alias_type='...', alias_value=?)`.
+     Steady-state re-runs ask the mapping per-account once (O(1))
+     against a tiny, binding-only table, instead of a filtered scan
+     over the ever-growing observation history. The seed itself is
+     infrequent, so this matters most once the map is read from
+     runtime paths as well.
+
+  The dedicated `account_person_map` is therefore kept even though
+  the binding *could* in principle be reconstructed from `persons`
+  alone.
 
 ## Related
 
