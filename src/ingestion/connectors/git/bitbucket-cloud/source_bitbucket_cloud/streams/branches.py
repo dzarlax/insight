@@ -19,9 +19,11 @@ logger = logging.getLogger("airbyte")
 class BranchesStream(HttpSubStream, BitbucketCloudStream):
     """Branches for each repository.
 
-    Incremental per-repo cursor on ``target_date`` (latest commit date on branch).
-    Having cursor_field skips the CDK auto-assigned ResumableFullRefreshCursor so
-    the commits stream can re-iterate branches as a parent via HttpSubStream.
+    Incremental per-branch state: ``{ws/slug/branch: {head_sha, target_date}}``.
+    A per-repo date cursor is unsafe here because force-pushes can rewrite a
+    branch to a commit with an older author_date than the cursor, making the
+    rewritten branch sort below the early-exit threshold and silently vanish
+    from subsequent syncs. Hash-based comparison avoids that class of miss.
 
     Deleted branches are not re-emitted (no API signal). This is acceptable: bronze
     is a data lake, keeping historical branch rows is desirable.
@@ -30,10 +32,9 @@ class BranchesStream(HttpSubStream, BitbucketCloudStream):
     name = "branches"
     cursor_field = "target_date"
     use_cache = True
-    # Descending API sort (sort=-target.date): mid-slice checkpointing would
-    # persist the NEWEST cursor after record #1 and a crash before slice
-    # completion would cause the next run to skip all remaining (older)
-    # records. State persists only at slice (per-repo) boundaries.
+    ignore_404 = True
+    # State persists only at slice (per-repo) boundaries: all per-branch
+    # entries for a repo land atomically after pagination completes.
     state_checkpoint_interval = None
 
     def __init__(
@@ -82,14 +83,22 @@ class BranchesStream(HttpSubStream, BitbucketCloudStream):
                 slug = repo_record.get("slug")
                 if not workspace or not slug:
                     continue
-                partition_key = f"{workspace}/{slug}"
-                cursor = (state.get(partition_key, {}) or {}).get(self.cursor_field, "") or ""
+                prefix = f"{workspace}/{slug}/"
+                # Build the per-branch head map for this repo from state so
+                # parse_response can skip emitting branches whose HEAD is
+                # unchanged without relying on the (force-push-unsafe) date
+                # cursor.
+                branch_heads = {
+                    k[len(prefix):]: (v or {}).get("head_sha", "") or ""
+                    for k, v in state.items()
+                    if k.startswith(prefix) and isinstance(v, dict)
+                }
                 self._stop_pagination = False
                 slice_count += 1
                 yield {
                     "parent": repo_record,
-                    "cursor_value": cursor,
-                    "partition_key": partition_key,
+                    "branch_heads": branch_heads,
+                    "has_prior_state": bool(branch_heads),
                 }
         logger.info(f"branches: iterated {slice_count} repo slices")
 
@@ -108,8 +117,9 @@ class BranchesStream(HttpSubStream, BitbucketCloudStream):
         # No BBQL q-filter: Bitbucket docs only document `q=name~"..."` for
         # the refs endpoint; `target.date` appears to return 0 rows in
         # practice (see branches stream regression on prod). Incremental
-        # filtering happens client-side via sort=-target.date + early-exit
-        # in parse_response.
+        # filtering happens client-side via per-branch head_sha comparison
+        # in parse_response. sort=-target.date is kept so the first run's
+        # start_date cutoff can stop pagination once we cross below it.
         return params
 
     def next_page_token(self, response):
@@ -130,27 +140,34 @@ class BranchesStream(HttpSubStream, BitbucketCloudStream):
         slug = repo["slug"]
         default_branch_name = repo.get("mainbranch_name", "")
         repo_updated_on = repo.get("updated_on", "")
-        cursor_value = s.get("cursor_value", "") or ""
+        branch_heads: Mapping[str, str] = s.get("branch_heads") or {}
+        has_prior_state: bool = bool(s.get("has_prior_state"))
         emitted = 0
+        skipped_unchanged = 0
 
         for branch in self._iter_values(response):
             branch_name = branch.get("name", "")
             target = branch.get("target") or {}
-            target_hash = target.get("hash", "")
+            target_hash = target.get("hash", "") or ""
             target_date = target.get("date", "") or ""
 
-            if cursor_value and target_date and target_date <= cursor_value:
-                self._stop_pagination = True
-                logger.info(
-                    f"branches: {workspace}/{slug} cursor early-exit at "
-                    f"target_date={target_date} cursor={cursor_value}"
-                )
-                return
-            # start_date cutoff applies only on first run (no cursor). Branches
-            # are newest-first by target.date, so once we cross below start_date
-            # the rest of pagination is older and can be skipped.
+            stored_hash = branch_heads.get(branch_name, "") or ""
+
+            # HEAD-unchanged skip: if stored head_sha matches current target_hash,
+            # the branch has no new commits (and no force-push). Skip emitting;
+            # commits stream's own HEAD-unchanged guard also short-circuits.
+            # Crucially, we do NOT stop pagination here — a later branch on a
+            # following page may have been force-pushed to an older-dated commit
+            # and must still be visited.
+            if stored_hash and target_hash and stored_hash == target_hash:
+                skipped_unchanged += 1
+                continue
+
+            # start_date cutoff only on true first run (no stored state for
+            # any branch in this repo). With prior state, older pages may
+            # still contain force-pushed branches that need emission.
             if (
-                not cursor_value
+                not has_prior_state
                 and self._start_date
                 and target_date
                 and target_date[:10] < self._start_date
@@ -180,7 +197,8 @@ class BranchesStream(HttpSubStream, BitbucketCloudStream):
             yield self._envelope(record)
 
         logger.debug(
-            f"branches: repo={workspace}/{slug} page_emitted={emitted}"
+            f"branches: repo={workspace}/{slug} page_emitted={emitted} "
+            f"skipped_unchanged={skipped_unchanged}"
         )
 
     def get_updated_state(
@@ -190,16 +208,18 @@ class BranchesStream(HttpSubStream, BitbucketCloudStream):
     ) -> MutableMapping[str, Any]:
         workspace = latest_record.get("workspace", "")
         slug = latest_record.get("repo_slug", "")
-        if not workspace or not slug:
+        branch_name = latest_record.get("name", "") or ""
+        if not workspace or not slug or not branch_name:
             return current_stream_state
-        partition_key = f"{workspace}/{slug}"
+        partition_key = f"{workspace}/{slug}/{branch_name}"
+        target_hash = latest_record.get("target_hash", "") or ""
         target_date = latest_record.get(self.cursor_field, "") or ""
-        if not target_date:
-            return current_stream_state
         entry = dict(current_stream_state.get(partition_key, {}) or {})
-        prev = entry.get(self.cursor_field, "") or ""
-        if target_date > prev:
+        if target_hash:
+            entry["head_sha"] = target_hash
+        if target_date:
             entry[self.cursor_field] = target_date
+        if entry:
             current_stream_state[partition_key] = entry
         return current_stream_state
 

@@ -52,6 +52,7 @@ class CommitsStream(HttpSubStream, BitbucketCloudStream):
     name = "commits"
     cursor_field = "date"
     use_cache = True
+    ignore_404 = True
     # Commits API returns newest-first per branch: mid-slice checkpointing
     # would persist the HEAD cursor after record #1 and a crash before
     # slice completion would mark the branch fully synced via the HEAD-guard
