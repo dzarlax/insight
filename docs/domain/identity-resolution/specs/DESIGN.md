@@ -798,7 +798,7 @@ identity-resolution Rust service at
 and is applied by the service's own SeaORM `Migrator` at startup
 (a helm `initContainer` also runs `identity-resolution migrate`
 before the main container starts). See
-[ADR-0006](../../../ingestion/specs/ADR/0006-service-owned-migrations.md)
+[ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)
 for the service-owned-migrations policy. The seed scripts here
 operate on the already-created table; they never issue `CREATE`,
 `ALTER`, `TRUNCATE`, or `DELETE`.
