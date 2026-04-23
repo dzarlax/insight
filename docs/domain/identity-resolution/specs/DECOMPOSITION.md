@@ -56,7 +56,7 @@ These items have schema defined in DESIGN §3.7 (`cpt-insightspec-ir-dbtable-mer
   - Hot-path alias lookup in `aliases` table
   - ClickHouse Dictionary for analytical Silver step 2 enrichment
   - Tenant isolation on all queries
-  - Cross-domain integration: `aliases.person_id` references `persons.id` (person domain creates person records via dbt seed)
+  - Cross-domain integration: `aliases.person_id` references `persons.person_id` (person domain creates person records; identity-resolution seeds the initial `persons` from `identity_inputs`, see ADR-0002)
 
 - **Out of scope**:
   - `identity_inputs` table (Feature 2)

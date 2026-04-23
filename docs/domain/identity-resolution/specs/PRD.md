@@ -573,7 +573,7 @@ Every merge operation **MUST** be fully reversible via split. After a merge-then
 
 **Direction**: provided by library (identity resolution provides `aliases.person_id`)
 
-**Protocol/Format**: Logical FK — `aliases.person_id` references `persons.id` in the person domain
+**Protocol/Format**: Logical FK — `aliases.person_id` references `persons.person_id` (the stable UUIDv7, not the auto-increment observation row PK)
 
 **Description**: The `aliases` table provides the authoritative mapping from identity signals to person records. The person domain owns person creation; identity resolution links aliases to existing persons. The `person_id` column in `aliases` is the primary integration point.
 

@@ -30,7 +30,7 @@ Out of scope:
 
 ## Cross-Domain References
 
-- **Person domain**: `aliases.person_id` references `persons.id`. The Person domain owns person records; Identity Resolution links aliases to existing persons.
+- **Person domain**: `aliases.person_id` references `persons.person_id` (the stable UUIDv7 identity, not the auto-increment observation row PK). The Person domain owns person records; Identity Resolution links aliases to existing persons.
 - **Org-Chart domain**: `identity_inputs` may carry org-related data consumed by the Org-Chart domain. No direct table references.
 - **Shared table**: `identity_inputs` is owned by this domain and read by the Person domain (for person-attribute observations) and optionally by the Org-Chart domain.
 

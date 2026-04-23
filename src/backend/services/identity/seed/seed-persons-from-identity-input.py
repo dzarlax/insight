@@ -85,10 +85,12 @@ except ImportError:
 
 # -- Schema constraints (mirror src/backend/services/identity/src/migration/
 # m20260421_000001_persons.rs -- the authoritative DDL is now in the Rust
-# service's SeaORM Migrator; see ADR-0006)
-# VARCHAR(512) for alias_value -- longer values are rejected rather than
-# silently truncated by INSERT IGNORE.
-MAX_ALIAS_VALUE_LEN = 512
+# service's SeaORM Migrator; see ADR-0006).
+# Longer values are rejected rather than silently truncated by INSERT IGNORE:
+# truncation would let two distinct source-accounts collapse onto one mapping
+# row and poison the account->person binding.
+MAX_ALIAS_VALUE_LEN = 512         # VARCHAR(512) for alias_value
+MAX_SOURCE_ACCOUNT_ID_LEN = 255   # VARCHAR(255) for account_person_map.source_account_id
 
 # -- ClickHouse connection ------------------------------------------------
 CH_URL = os.environ.get("CLICKHOUSE_URL", "http://localhost:30123")
@@ -237,6 +239,7 @@ def main():
     reused_from_map = 0
     minted_initial = 0
     minted_new_account = 0
+    oversized_account_id = 0
 
     for key, obs_list in accounts.items():
         if key in existing_map:
@@ -245,6 +248,14 @@ def main():
             continue
 
         tenant_id, source_type, source_id_str, source_account_id = key
+
+        # Reject oversized source_account_id rather than letting MariaDB
+        # silently truncate it into account_person_map's VARCHAR(255) and
+        # collapse distinct accounts onto one mapping PK. Char length (not
+        # byte length) because utf8mb4 caps at 255 *characters*.
+        if len(source_account_id) > MAX_SOURCE_ACCOUNT_ID_LEN:
+            oversized_account_id += 1
+            continue
 
         email = None
         for obs in obs_list:
@@ -282,6 +293,9 @@ def main():
 
     print(f"  Accounts: reused-from-map={reused_from_map}, "
           f"minted-initial={minted_initial}, minted-new-account={minted_new_account}")
+    if oversized_account_id:
+        print(f"  Accounts skipped -- source_account_id > "
+              f"{MAX_SOURCE_ACCOUNT_ID_LEN} characters: {oversized_account_id}")
 
     # 5. Persist the new mapping rows. INSERT IGNORE so a concurrent seed
     #    or a partial-previous-run does not fail this run; the PK on

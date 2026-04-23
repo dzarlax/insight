@@ -29,9 +29,9 @@
   - [4.8 Operational Considerations](#48-operational-considerations)
 - [5. Implementation Recommendations](#5-implementation-recommendations)
   - [REC-IR-01: ClickHouse atomicity for merge/split (Phase 3+)](#rec-ir-01-clickhouse-atomicity-for-mergesplit-phase-3)
-  - [REC-IR-02: identity_inputs incremental watermark (Phase 2)](#rec-ir-02-identityinputs-incremental-watermark-phase-2)
+  - [REC-IR-02: identity_inputs incremental watermark (Phase 2)](#rec-ir-02-identity_inputs-incremental-watermark-phase-2)
   - [REC-IR-03: Shared unmapped table for all domains — RESOLVED](#rec-ir-03-shared-unmapped-table-for-all-domains--resolved)
-  - [REC-IR-04: Temporary `insight_tenant_id` / `insight_source_id` derivation via sipHash128 (Phase 1)](#rec-ir-04-temporary-insighttenantid--insightsourceid-derivation-via-siphash128-phase-1)
+  - [REC-IR-04: Temporary `insight_tenant_id` / `insight_source_id` derivation via sipHash128 (Phase 1)](#rec-ir-04-temporary-insight_tenant_id--insight_source_id-derivation-via-siphash128-phase-1)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -119,7 +119,7 @@ This domain is deliberately narrow: it owns alias-to-person mapping and the `per
 │                                                                        │   │
 │  ──── Cross-Domain ──────────────────────────────────────────────────  │   │
 │                                                                        │   │
-│       aliases.person_id ──FK──▶ persons.id (Person Domain)        ◀───┘   │
+│       aliases.person_id ──FK──▶ persons.person_id (Person Domain) ◀───┘   │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -127,10 +127,11 @@ This domain is deliberately narrow: it owns alias-to-person mapping and the `per
 | Layer | Responsibility | Technology |
 |---|---|---|
 | Ingestion | Connectors write alias observations to `identity_inputs` | ClickHouse (MergeTree) |
-| Processing | BootstrapJob resolves inputs into aliases; MatchingEngine evaluates rules | Python / Argo Workflows |
-| Storage | All identity tables: aliases, match_rules, unmapped, conflicts, merge_audits | ClickHouse (ReplacingMergeTree, MergeTree) |
-| API | REST endpoints for resolution, merge/split, unmapped management, GDPR | Python (FastAPI) |
-| Cross-domain | `aliases.person_id` references `persons.id` in person domain | Logical FK (no physical constraint) |
+| Processing | BootstrapJob resolves inputs into aliases; MatchingEngine evaluates rules | Argo Workflows (Phase 2+, not yet built) |
+| Storage (analytical) | aliases, match_rules, unmapped, conflicts, merge_audits | ClickHouse (ReplacingMergeTree, MergeTree) |
+| Storage (identity history) | `persons` (observation history), `account_person_map` (stable account→person binding) | MariaDB (InnoDB) |
+| API | Person lookup + migration runner | Rust (`identity-resolution` service, axum) |
+| Cross-domain | `aliases.person_id` references `persons.person_id` in person domain | Logical FK (no physical constraint) |
 
 ---
 
@@ -145,18 +146,20 @@ This domain is deliberately narrow: it owns alias-to-person mapping and the `per
 Identity resolution is fundamentally an alias mapping problem. Every identity signal from every source system is an alias — an `(alias_type, alias_value)` pair that maps to a person. The architecture treats all signals uniformly: an email, a username, an employee ID, and a platform-specific handle are all aliases with different types. This uniform treatment simplifies the resolution pipeline and makes adding new alias types a configuration change, not an architecture change.
 
 
-#### ClickHouse-Native Storage
+#### Storage Split — ClickHouse Analytical + MariaDB Identity History
 
 - [ ] `p2` - **ID**: `cpt-insightspec-ir-principle-ch-native`
 
-All identity resolution data resides in ClickHouse. There is no separate RDBMS for "transactional" identity operations. ClickHouse's ReplacingMergeTree provides last-writer-wins semantics for alias updates; merge/split safety is achieved through idempotent snapshot-based operations with full audit trails rather than ACID transactions. This eliminates the sync lag and operational complexity of a dual-database architecture.
+Analytical identity-resolution tables (`identity_inputs`, `aliases`, `match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) reside in ClickHouse. ClickHouse's ReplacingMergeTree provides last-writer-wins semantics for alias updates; merge/split safety is achieved through idempotent snapshot-based operations with full audit trails rather than ACID transactions.
+
+Identity-attribute history (`persons`) and the stable source-account-to-`person_id` binding (`account_person_map`) live in MariaDB and are owned by the Rust `identity-resolution` service — transactional semantics and CRUD-friendly access are required there, and the dataset is tenant-metadata-scale rather than event-stream-scale. See §3.7 and ADR-0002 (stable `person_id` via account-to-person mapping) / ADR-0006 (service-owned migrations).
 
 
 #### Domain Isolation
 
 - [ ] `p2` - **ID**: `cpt-insightspec-ir-principle-domain-isolation`
 
-Identity resolution owns alias-to-person mapping and nothing else. Person attributes (display_name, role, location), golden record assembly, person-level conflict detection, org hierarchy, and assignments belong to their respective domains. This boundary is enforced by table ownership: identity resolution writes only to its own tables and references `persons.id` as a foreign key without owning or modifying the persons table.
+Identity resolution owns alias-to-person mapping and the `persons` / `account_person_map` identity-history tables, and nothing else. Person-level golden-record assembly, person-level conflict detection, org hierarchy, and assignments belong to their respective domains. This boundary is enforced by table ownership: identity resolution writes only to its own tables and references `persons.person_id` as the logical FK target for aliases.
 
 
 #### Fail-Safe Defaults
@@ -220,7 +223,7 @@ Identity resolution does NOT own or write to:
 - `person_assignments` table (org-chart domain)
 - Any permission/RBAC tables (separate domain)
 
-The person domain reads `persons` observations to build its golden record; identity resolution links aliases to `person_id`s. `person_id` is assigned deterministically by this domain's seed and is the join key across both domains.
+The person domain reads `persons` observations to build its golden record; identity resolution links aliases to `person_id`s. `person_id` is a random UUIDv7 minted at first observation of each source-account and persisted in `account_person_map`; it is the stable join key across both domains and never re-derived from mutable attributes (see ADR-0002).
 
 
 #### No Fuzzy Auto-Link
@@ -259,10 +262,10 @@ All temporal ranges use `[effective_from, effective_to)` half-open intervals. `e
 
 **Relationships**:
 - `identity_inputs` → (processed by BootstrapJob) → `aliases`
-- `aliases.person_id` → `persons.id` (person domain, logical FK)
-- `unmapped.resolved_person_id` → `persons.id` (person domain, logical FK)
-- `conflicts.person_id` → `persons.id` (person domain, logical FK)
-- `merge_audits.target_person_id` → `persons.id` (person domain, logical FK)
+- `aliases.person_id` → `persons.person_id` (logical FK — stable identity, not the auto-increment row PK)
+- `unmapped.resolved_person_id` → `persons.person_id` (logical FK)
+- `conflicts.person_id` → `persons.person_id` (logical FK)
+- `merge_audits.target_person_id` → `persons.person_id` (logical FK)
 
 ### 3.2 Component Model
 
@@ -308,7 +311,7 @@ Processes alias observations from `identity_inputs` into resolved `aliases` rows
 
 ##### Responsibility boundaries
 
-- Does NOT create person records — that is the person domain's responsibility. Bootstrap assumes persons exist (seeded by HR dbt models in Phase 1 MVP).
+- Does NOT create person records — that is the person domain's responsibility. Bootstrap assumes persons exist (initially seeded by the identity-resolution `seed-persons-from-identity-input.py` one-shot script from `identity_inputs`; see §3.7 and ADR-0002).
 - Does NOT build golden records or detect person-level conflicts — those belong to the person domain.
 - Does NOT expose API endpoints — that is ResolutionService.
 
@@ -466,7 +469,7 @@ Detects alias-level conflicts — when the same alias value appears linked to di
 
 | Dependency Module | Interface Used | Purpose |
 |---|---|---|
-| Person domain (`persons` table) | Logical FK (`aliases.person_id → persons.id`) | Alias-to-person mapping target |
+| Person domain (`persons` table) | Logical FK (`aliases.person_id → persons.person_id`) | Alias-to-person mapping target |
 | Person domain (person creation) | Domain event / API | BootstrapJob triggers person creation when new identity discovered (Phase 2+) |
 | Connector sync events | Argo Workflow trigger | BootstrapJob runs after connector sync completes |
 | dbt models (Bronze → Silver) | ClickHouse tables | Connectors populate `identity_inputs` via `identity_input_from_history` macro applied to `fields_history` models |
@@ -608,7 +611,7 @@ sequenceDiagram
 
 - [ ] `p3` - **ID**: `cpt-insightspec-ir-db-schemas`
 
-All tables are in ClickHouse. Naming follows PR #55 conventions. No Nullable unless semantically required; use empty string (`''`) or zero sentinel (`'1970-01-01'`) instead.
+Analytical tables (`identity_inputs`, `aliases`, `match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) are in ClickHouse; identity-history tables (`persons`, `account_person_map`) are in MariaDB and owned by the Rust `identity-resolution` service (see §3.7, ADR-0002, ADR-0006). Naming follows PR #55 conventions. For ClickHouse tables: no Nullable unless semantically required; use empty string (`''`) or zero sentinel (`'1970-01-01'`) instead.
 
 #### Table: `identity_inputs`
 
@@ -673,7 +676,7 @@ Resolved alias-to-person mapping. Each row links one `(alias_type, alias_value)`
 |---|---|---|
 | `id` | `UUID DEFAULT generateUUIDv7()` | PK |
 | `insight_tenant_id` | `UUID` | Tenant isolation |
-| `person_id` | `UUID` | Logical FK → `persons.id` (person domain) |
+| `person_id` | `UUID` | Logical FK → `persons.person_id` |
 | `alias_type` | `LowCardinality(String)` | `email`, `username`, `employee_id`, `display_name`, `platform_id` |
 | `alias_value` | `String` | Normalized alias value |
 | `alias_field_name` | `String` | Fully-qualified source field path (from identity_inputs) |
@@ -1280,19 +1283,23 @@ This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verific
 
 ### 4.7 Deployment
 
-**ClickHouse-only architecture** — no separate RDBMS container required for identity resolution.
+**Hybrid storage** — ClickHouse for analytical identity tables, MariaDB for transactional identity-history (`persons`, `account_person_map`).
 
 **Kubernetes (production)**:
 
 | Component | Type | Resources |
 |---|---|---|
 | ClickHouse | StatefulSet (shared cluster) | Per cluster sizing |
-| ResolutionService | Deployment (horizontal scaling) | 0.5 CPU, 256 MB RAM per replica |
-| BootstrapJob | Argo WorkflowTemplate (scheduled) | 0.5 CPU, 512 MB RAM per run |
+| MariaDB | StatefulSet (Bitnami chart, shared cluster) | Per cluster sizing |
+| identity-resolution | Deployment (horizontal scaling) — Rust `axum` service | 0.5 CPU, 256 MB RAM per replica |
+| identity-resolution migrate | InitContainer / one-shot Job — applies MariaDB schema via embedded SeaORM `Migrator` | 0.1 CPU, 64 MB RAM |
+| BootstrapJob (Phase 2+, not yet built) | Argo WorkflowTemplate (scheduled) | 0.5 CPU, 512 MB RAM per run |
 
-**ResolutionService** is a stateless Python (FastAPI) service connecting to ClickHouse via native protocol. Horizontal scaling via Kubernetes replicas.
+**identity-resolution** is a stateless Rust (axum) service. It owns the MariaDB `identity` database (migrations applied at startup via SeaORM `Migrator`; see ADR-0006) and reads ClickHouse `bronze_bamboohr.employees` for person lookup. Horizontal scaling via Kubernetes replicas.
 
-**BootstrapJob** runs as an Argo Workflow, triggered post-connector-sync. Each run is idempotent — safe to retry on failure.
+**Initial `persons` seed** is a one-shot script (`src/backend/services/identity/seed/seed-persons-from-identity-input.py`) that reads ClickHouse `identity.identity_inputs` and writes MariaDB `persons` + `account_person_map`. Idempotent via `INSERT IGNORE`. See ADR-0002.
+
+**BootstrapJob** (Phase 2+) will run as an Argo Workflow, triggered post-connector-sync. Each run is idempotent — safe to retry on failure.
 
 **Environment**: Kind K8s cluster with Argo Workflows (per PR #45 migration).
 
