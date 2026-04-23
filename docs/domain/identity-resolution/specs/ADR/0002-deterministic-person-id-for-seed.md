@@ -39,9 +39,12 @@ scopes the cross-source auto-merge to the initial-bootstrap pass only.
 
 ## Decision
 
-1. **`person_id` is a random UUIDv4**, minted at the first observation
+1. **`person_id` is a UUIDv7**, minted at the first observation
    of a source-account. Once minted it never changes and is never
-   re-derived from any field value.
+   re-derived from any field value. UUIDv7 carries a 48-bit
+   millisecond timestamp prefix so consecutive `person_id`s cluster
+   in InnoDB's clustered index and secondary indexes on `person_id`
+   (see glossary ADR-0001).
 
 2. **The binding is persisted in a dedicated mapping table**,
    `account_person_map` (MariaDB, same `identity` database as
@@ -60,14 +63,14 @@ scopes the cross-source auto-merge to the initial-bootstrap pass only.
    **Initial bootstrap** -- the map is empty when the seed starts.
    Source-accounts that share the same email (case- and whitespace-
    normalised) within a tenant get one `person_id` (minted once as
-   UUIDv4 during the same seed pass). Every resulting mapping is
+   UUIDv7 during the same seed pass). Every resulting mapping is
    recorded with `created_reason = 'initial-bootstrap'`.
 
    **Steady-state** -- the map is non-empty when the seed starts.
    - Known accounts (already in the map) reuse their mapped
      `person_id`. No re-derivation, no re-assignment.
    - Unknown accounts get a **fresh, isolated** `person_id`
-     (UUIDv4). Email-equality auto-merge with existing persons is
+     (UUIDv7). Email-equality auto-merge with existing persons is
      **disabled** in this mode. The mapping is written with
      `created_reason = 'new-account'`.
 
@@ -97,8 +100,6 @@ scopes the cross-source auto-merge to the initial-bootstrap pass only.
   has no UI or operator review. Every subsequent source enrollment
   gets a fresh `person_id` per account; merging into existing
   persons is deferred to the operator flow (once UI exists).
-- **No magic constant.** No project-level namespace UUID to
-  propagate through environment migrations.
 - **Compute cost is irrelevant.** Generating random UUIDs is free.
   The seed is one-time (or few-times) infrastructure; we optimise
   for data safety, not throughput.

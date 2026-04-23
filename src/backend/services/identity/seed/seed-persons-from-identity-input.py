@@ -14,7 +14,7 @@ Two modes (detected automatically):
 
 - **Initial bootstrap** -- `account_person_map` is empty.
   Source-accounts sharing an email within a tenant are auto-merged
-  into one `person_id` (random UUIDv4). This is a one-time pass at
+  into one `person_id` (UUIDv7). This is a one-time pass at
   system initialisation.
 - **Steady-state** -- `account_person_map` already has entries.
   Unknown accounts get their own fresh `person_id`; email-automerge
@@ -46,12 +46,32 @@ Usage:
 import base64
 import json
 import os
+import time
 import urllib.parse
 import urllib.request
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
+
+
+def uuid7() -> uuid.UUID:
+    """Generate a UUIDv7 per RFC 9562: 48-bit ms timestamp + random bits.
+
+    The time-ordered prefix clusters consecutive `person_id`s in InnoDB's
+    clustered index and in the secondary indexes on `person_id`; pure
+    random UUIDv4 would scatter inserts and cause page splits. See
+    `docs/shared/glossary/ADR/0001-uuidv7-primary-key.md`.
+    """
+    ts_ms = int(time.time() * 1000)
+    rand = os.urandom(10)
+    b = bytearray(16)
+    b[0:6] = ts_ms.to_bytes(6, "big")
+    b[6] = 0x70 | (rand[0] & 0x0F)   # version 7 in high nibble
+    b[7] = rand[1]
+    b[8] = 0x80 | (rand[2] & 0x3F)   # variant 10xx in top 2 bits
+    b[9:16] = rand[3:10]
+    return uuid.UUID(bytes=bytes(b))
 
 # MariaDB driver -- pymysql preferred, mysql.connector fallback. For
 # BINARY(16) columns we pass `uuid.UUID.bytes` (16 raw bytes) rather than
@@ -202,9 +222,9 @@ def main():
     #    - Known accounts (present in map): use the mapped, stable id.
     #    - Unknown accounts during initial bootstrap: email-based automerge
     #      within this run -- source-accounts sharing an email in the same
-    #      tenant get one person_id (random UUIDv4).
+    #      tenant get one person_id (UUIDv7).
     #    - Unknown accounts during steady-state: each gets its own fresh
-    #      person_id (random UUIDv4) -- no automerge. See ADR-0002.
+    #      person_id (UUIDv7) -- no automerge. See ADR-0002.
     #
     #    Accounts without an email in their observations are still skipped
     #    (same as before -- email remains the sole identity anchor in the
@@ -238,7 +258,7 @@ def main():
             email_key = (tenant_id, email)
             person_uuid = email_to_new_person.get(email_key)
             if person_uuid is None:
-                person_uuid = uuid.uuid4()
+                person_uuid = uuid7()
                 email_to_new_person[email_key] = person_uuid
                 minted_initial += 1
             reason = "initial-bootstrap"
@@ -246,7 +266,7 @@ def main():
             # Steady-state: one new account -> one new person. No merge
             # with existing persons (by email or otherwise) happens here
             # -- that is explicitly deferred to the operator-driven flow.
-            person_uuid = uuid.uuid4()
+            person_uuid = uuid7()
             minted_new_account += 1
             reason = "new-account"
 
