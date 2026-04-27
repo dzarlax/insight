@@ -548,7 +548,7 @@ Person-attribute-level conflicts — when two sources provide different values f
 
 **ORDER BY**: `(insight_tenant_id, person_id, status, attribute_name, id)`
 
-> **Shared unmapped table** ([ADR-0001](./ADR/0001-shared-unmapped-table.md)): Person-attribute observations that cannot be resolved are stored in the IR domain's shared `unmapped` table (not a separate `person_unmapped`). Both domains use the same structure and data origin (`identity_inputs`). Differentiation is by `value_type`: identity types (`email`, `username`, `employee_id`, `platform_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.).
+> **Shared unmapped table** ([ADR-0001](./ADR/0001-shared-unmapped-table.md)): Person-attribute observations that cannot be resolved are stored in the IR domain's shared `unmapped` table (not a separate `person_unmapped`). Both domains use the same structure and data origin (`identity_inputs`). Differentiation is by `value_type`: identity types (`id`, `email`, `username`, `employee_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.).
 
 **Engine**: `ReplacingMergeTree(updated_at)`
 

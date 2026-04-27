@@ -58,24 +58,42 @@ This ADR records:
    `value_full_text` / `value`), `person_id`, `author_person_id`,
    `reason`, `created_at`.
 
-3. **Observation schema splits value by type**, with hardcoded routing:
+3. **Observation schema splits value by type**, with hardcoded routing.
+   Canonical value-types are `id`, `email`, `username`, `display_name`;
+   everything else is a known custom attribute (e.g., `employee_id`,
+   `platform_id`, `functional_team`, future per-tenant fields) and
+   lands in the catch-all column. The list is open-ended — `value_type`
+   is a free-form string, not an enum.
 
    | `value_type` values | column | type / collation | rationale |
    |---|---|---|---|
-   | `id`, `email` | `value_id` | `VARCHAR(320) COLLATE utf8mb4_bin` | Strict byte comparison; hot-path lookup key. Size 320 covers the RFC 5321/5322 email maximum (64 local + `@` + 255 domain). |
+   | `id`, `email`, `username` | `value_id` | `VARCHAR(320) COLLATE utf8mb4_bin` | Strict byte comparison; hot-path lookup key. Size 320 covers the RFC 5321/5322 email maximum (64 local + `@` + 255 domain). `username` is id-like (case-sensitive in most platforms) and thus joins `id`/`email` here. |
    | `display_name` | `value_full_text` | `VARCHAR(512) COLLATE utf8mb4_unicode_ci` | Case- and accent-insensitive for operator search; leaves room for future FULLTEXT. |
-   | anything else (e.g., `employee_id`, `functional_team`, future custom fields) | `value` | `TEXT` | Catch-all, not indexed. |
+   | anything else | `value` | `TEXT` | Catch-all; not directly indexed (uniqueness flows through `value_hash`, see below). |
 
    Exactly one of the three value columns is populated per normal row.
    All-three-null is reserved for future "attribute unset at source"
    events (not emitted by the initial seed).
 
-   A generated column
-   `value_effective = COALESCE(value_id, value_full_text, LEFT(value, 512))`
-   coalesces the three into one indexable expression so the UNIQUE
-   key `(tenant, person_id, source_type, source_id, value_type,
-   value_effective)` dedupes observations correctly (`MariaDB`
-   otherwise treats NULL as distinct in UNIQUE keys).
+   **Two derived columns separate display from uniqueness**:
+
+   - `value_effective TEXT GENERATED ALWAYS AS (COALESCE(value_id, value_full_text, value)) STORED`
+     — human-readable view of the routed value; **not indexed**. Use
+     it from SELECTs when you want the actual value without knowing
+     the routing rules.
+   - `value_hash CHAR(64) COLLATE ascii_bin GENERATED ALWAYS AS (SHA2(COALESCE(...), 256)) STORED`
+     — SHA-256 hex of the coalesced value. Fixed-width, collision-free,
+     fully indexable regardless of value length. Used in the natural-
+     key UNIQUE so `INSERT IGNORE` re-runs are idempotent even for
+     catch-all `TEXT` values longer than any prefix limit. (A previous
+     design used `LEFT(value, 512)` in `value_effective`; that
+     collapsed two distinct long values with the same 512-char prefix
+     into the same UNIQUE key, losing data on `INSERT IGNORE`.)
+
+   `UNIQUE KEY uq_person_observation (tenant, person_id, source_type,
+   source_id, value_type, value_hash)`. `MariaDB` treats NULL as
+   distinct in UNIQUE keys; `value_hash` is always non-null (SHA2 of
+   a NULL coalesce is well-defined for at least one populated column).
 
 4. **Every connector emits `value_type='id'`.** On every activity in
    `identity_inputs`, the connector's dbt macro emits an observation
@@ -93,6 +111,17 @@ This ADR records:
    get their redundant `platform_id` rows renamed to `id` (the values
    were always equal to `source_account_id`). See DECOMPOSITION for
    the full list.
+
+   **Sub-second timestamps**. `created_at`, and the `valid_from` /
+   `valid_to` of `account_person_map`, all use `TIMESTAMP(6)` —
+   microsecond precision. `created_at` is the ordering key for the
+   SCD-2 rebuild (`LEAD(created_at) OVER (...)`) and `valid_from`
+   is part of `account_person_map.PRIMARY KEY`; second-precision
+   would risk PK collisions and non-deterministic LEAD ordering for
+   events landing in the same wall-clock second. The Python seed
+   takes `created_at` from each `identity_inputs._synced_at` per
+   observation (so chronology in `persons` reflects when each value
+   was actually seen at the source, not when this seed run began).
 
 5. **`account_person_map` is an SCD2 materialized cache**, not the
    source of truth. It is rebuilt deterministically from `persons`

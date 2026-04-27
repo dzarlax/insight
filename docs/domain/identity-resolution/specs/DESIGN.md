@@ -312,8 +312,8 @@ Processes alias observations from `identity_inputs` into resolved `aliases` rows
 
 ##### Responsibility boundaries
 
-- Does NOT create person records — that is the person domain's responsibility. Bootstrap assumes persons exist (initially seeded by the identity-resolution `seed-persons-from-identity-input.py` one-shot script from `identity_inputs`; see §3.7 and ADR-0002).
-- Does NOT build golden records or detect person-level conflicts — those belong to the person domain.
+- Does NOT create person records here. The MariaDB `persons` history is owned and written by the identity-resolution service itself via the `seed-persons-from-identity-input.py` one-shot script (ADR-0002) and, in future, operator merge/split flows. BootstrapJob assumes those records exist and only resolves aliases against them.
+- Does NOT build golden records or detect person-level conflicts — those belong to the person domain (which reads `persons` and projects a golden view; see person-domain DESIGN).
 - Does NOT expose API endpoints — that is ResolutionService.
 
 ##### Related components (by ID)
@@ -470,8 +470,8 @@ Detects alias-level conflicts — when the same alias value appears linked to di
 
 | Dependency Module | Interface Used | Purpose |
 |---|---|---|
-| Person domain (`persons` table) | Logical FK (`aliases.person_id → persons.person_id`) | Alias-to-person mapping target |
-| Person domain (person creation) | Domain event / API | BootstrapJob triggers person creation when new identity discovered (Phase 2+) |
+| Identity-resolution `persons` (MariaDB) | Logical FK (`aliases.person_id → persons.person_id`) | Alias-to-person mapping target. Owned and written by this domain via the seed (ADR-0002) and future operator flows; the person domain reads from it to build its golden record |
+| Identity-resolution seed | One-shot Python script | Initial population of `persons` from `identity_inputs`; runs at bootstrap (and again on operator demand for new connectors). See ADR-0002 |
 | Connector sync events | Argo Workflow trigger | BootstrapJob runs after connector sync completes |
 | dbt models (Bronze → Silver) | ClickHouse tables | Connectors populate `identity_inputs` via `identity_input_from_history` macro applied to `fields_history` models |
 
@@ -729,24 +729,25 @@ Identity-attribute observation history for persons, stored in MariaDB. Each row 
 | Column | Type | Description |
 |---|---|---|
 | `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | PK (row identifier for operator references) |
-| `value_type` | `VARCHAR(50) NOT NULL` | Attribute kind — one of `id`, `email`, `display_name`, `employee_id`, `platform_id` (extensible) |
+| `value_type` | `VARCHAR(50) NOT NULL` | Attribute kind — canonical: `id`, `email`, `username`, `display_name`. Known custom: `employee_id`, `platform_id`, etc. (free-form, extensible) |
 | `insight_source_type` | `VARCHAR(100) NOT NULL` | Source system: `bamboohr`, `zoom`, `cursor`, `claude_admin`, `gitlab`, etc. |
 | `insight_source_id` | `BINARY(16) NOT NULL` | Connector instance UUID (temporary: sipHash128 from Bronze string `source_id` until `sources` table exists — see REC-IR-04) |
 | `insight_tenant_id` | `BINARY(16) NOT NULL` | Tenant UUID (temporary: sipHash128 from Bronze string `tenant_id` until `tenants` table exists — see REC-IR-04) |
-| `value_id` | `VARCHAR(320) COLLATE utf8mb4_bin NULL` | Value for `value_type IN ('id', 'email')`. Strict byte comparison; hot-path lookup target. Size 320 covers RFC 5321/5322 email maximum (64 local + `@` + 255 domain) |
+| `value_id` | `VARCHAR(320) COLLATE utf8mb4_bin NULL` | Value for `value_type IN ('id', 'email', 'username')`. Strict byte comparison; hot-path lookup target. Size 320 covers RFC 5321/5322 email maximum (64 local + `@` + 255 domain). `username` is id-like (case-sensitive in most platforms) and routes here for strict-equality lookup |
 | `value_full_text` | `VARCHAR(512) COLLATE utf8mb4_unicode_ci NULL` | Value for `value_type='display_name'`. Case- and accent-insensitive collation for operator search; leaves room for future FULLTEXT index |
-| `value` | `TEXT NULL` | Catch-all value for any other `value_type` (e.g., `employee_id`, `functional_team`, custom attributes). Not indexed |
-| `value_effective` | `VARCHAR(512) GENERATED ALWAYS AS (COALESCE(value_id, value_full_text, LEFT(value, 512))) STORED` | Generated column coalescing the three value columns. Required for NULL-safe UNIQUE key on observations |
+| `value` | `TEXT NULL` | Catch-all value for any other `value_type` (e.g., `employee_id`, `platform_id`, `functional_team`, custom attributes). Not directly indexed |
+| `value_effective` | `TEXT GENERATED ALWAYS AS (COALESCE(value_id, value_full_text, value)) STORED` | Human-readable coalesce of the three value columns; **not indexed** (display only). Use it from SELECTs when you want the actual value without knowing the routing rules |
+| `value_hash` | `CHAR(64) COLLATE ascii_bin GENERATED ALWAYS AS (SHA2(COALESCE(value_id, value_full_text, value), 256)) STORED` | SHA-256 hex of the routed value. Fixed-width, fully indexable, collision-free regardless of value length. Used in the natural-key UNIQUE so `INSERT IGNORE` re-runs are idempotent even for catch-all `TEXT` values longer than any prefix limit |
 | `person_id` | `BINARY(16) NOT NULL` | Person UUID (random UUIDv7). Stable; never re-derived from attribute values. See ADR-0002 |
 | `author_person_id` | `BINARY(16) NOT NULL` | Person UUID of who/what made this change. Sentinel `00000000-0000-0000-0000-000000000000` = auto-minted by seed; real operator UUIDs for future merge/split flows |
-| `reason` | `TEXT NOT NULL DEFAULT ''` | Optional change-reason comment (empty for initial seed) |
-| `created_at` | `TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP` | When this record was inserted. MariaDB stores `TIMESTAMP` internally as UTC and converts to session timezone on read |
+| `reason` | `TEXT NOT NULL DEFAULT ''` | Optional change-reason comment. Empty for normal seed observations; `pending-iresolution` flags rows produced when an unknown account's email already exists in `persons` (see ADR-0002 §6) |
+| `created_at` | `TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)` | When this record was inserted (microsecond precision; MariaDB stores `TIMESTAMP` internally as UTC). The seed sets it from each observation's `identity_inputs._synced_at`, not from the seed wall-clock, so chronology in `persons` reflects when the source actually saw each value |
 
 **Hardcoded routing by `value_type`** (applied in seed + dbt macro):
 
 | `value_type` values | target column |
 |---|---|
-| `id`, `email` | `value_id` |
+| `id`, `email`, `username` | `value_id` |
 | `display_name` | `value_full_text` |
 | anything else | `value` |
 
@@ -762,7 +763,7 @@ Exactly one of `(value_id, value_full_text, value)` is populated per normal row;
 - `idx_person_id (person_id)` — list all attributes for a person
 - `idx_tenant_person (insight_tenant_id, person_id)` — tenant-scoped person lookup
 - `idx_source (insight_source_type, insight_source_id)` — filter by source system + instance
-- `uq_person_observation (insight_tenant_id, person_id, insight_source_type, insight_source_id, value_type, value_effective)` UNIQUE — enforces the natural observation key. The generated `value_effective` column is required because MariaDB treats `NULL` as distinct in UNIQUE keys; using `COALESCE` via the generated column gives us a non-NULL discriminator regardless of which of the three value columns is populated. Combined with `INSERT IGNORE` in the seed, guarantees idempotent re-runs
+- `uq_person_observation (insight_tenant_id, person_id, insight_source_type, insight_source_id, value_type, value_hash)` UNIQUE — enforces the natural observation key. The generated `value_hash` column (SHA-256 hex of the coalesced value) gives a fixed-width, collision-free discriminator regardless of value length, which is required because (a) MariaDB treats `NULL` as distinct in UNIQUE keys and (b) catch-all `TEXT` values cannot be fully indexed by prefix without truncation collisions. Combined with `INSERT IGNORE` in the seed, this guarantees idempotent re-runs
 
 ##### Semantics — append-only observation history (SCD-style)
 
@@ -801,8 +802,8 @@ Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (late
 | `person_id` | `BINARY(16) NOT NULL` | Person UUID (random UUIDv7); derived from `persons.person_id` of the opening observation |
 | `author_person_id` | `BINARY(16) NOT NULL` | Forwarded from the `persons` observation. Sentinel `00000000-0000-0000-0000-000000000000` = auto-minted by seed |
 | `reason` | `VARCHAR(50) NOT NULL` | `initial-bootstrap` \| `new-account` \| `operator-merge` \| ... — forwarded from the `persons` observation |
-| `valid_from` | `TIMESTAMP NOT NULL` | When this binding became current (= `created_at` of the opening `persons` observation) |
-| `valid_to` | `TIMESTAMP NULL` | When this binding ended (= next observation's `created_at`). `NULL` = currently active binding |
+| `valid_from` | `TIMESTAMP(6) NOT NULL` | When this binding became current (microsecond precision; = `created_at` of the opening `persons` observation). Sub-second precision is required because `valid_from` is part of the PRIMARY KEY — second-level resolution would risk PK collisions for closely-spaced events |
+| `valid_to` | `TIMESTAMP(6) NULL` | When this binding ended (= next observation's `created_at`). `NULL` = currently active binding |
 
 **Primary key**: `(insight_tenant_id, insight_source_type, insight_source_id, source_account_id, valid_from)` — one row per historical binding period. An account with N historical bindings has N rows; the latest has `valid_to = NULL`.
 
@@ -888,12 +889,12 @@ operate on the already-created table; they never issue `CREATE`,
    - `value_type = 'display_name'` → `value_full_text = value`, others NULL
    - otherwise → `value = value`, others NULL
 
-   `author_person_id` is the all-zero sentinel `00000000-0000-0000-0000-000000000000` for auto-minted bindings; the `uq_person_observation` UNIQUE key (on `value_effective`) dedupes re-runs.
+   `author_person_id` is the all-zero sentinel `00000000-0000-0000-0000-000000000000` for auto-minted bindings; the `uq_person_observation` UNIQUE key (on `value_hash`) dedupes re-runs. `created_at` is taken from each observation's `identity_inputs._synced_at`, not from the seed wall-clock, so chronology in `persons` reflects the source's view of when each value was seen.
 7. **Rebuild `account_person_map`** from `persons.value_type='id'` observations via `TRUNCATE` + `INSERT ... SELECT ... LEAD()` (see the account_person_map Semantics block for the SQL). Atomic single transaction. Drift relative to `persons` is impossible by construction.
 
 **Re-run semantics**: idempotent on `persons` (UNIQUE key dedupe), bit-identical on `account_person_map` (deterministic rebuild from same `persons` state). Adding a new source between runs creates new accounts; steady-state mode decides each one (skip-existing-email or new-person).
 
-See [ADR-0002](ADR/0002-deterministic-person-id-for-seed.md) for the full decision record.
+See [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) for the full decision record.
 
 **Safety / idempotency**:
 - Re-running the script is **safe**: the `account_person_map` lookup keeps `person_id` stable across runs, and `INSERT IGNORE` on both tables skips duplicates.

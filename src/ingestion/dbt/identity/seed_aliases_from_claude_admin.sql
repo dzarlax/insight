@@ -121,6 +121,7 @@ SELECT na.*, toUnixTimestamp64Milli(now64()) AS _version FROM new_aliases na
 LEFT ANTI JOIN {{ this }} existing
     ON  na.value_type          = existing.value_type
     AND na.value               = existing.value
+    AND na.insight_tenant_id   = existing.insight_tenant_id
     AND na.source_account_id   = existing.source_account_id
     AND existing.insight_source_type = 'claude_admin'
     AND existing.is_deleted    = 0

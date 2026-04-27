@@ -31,7 +31,7 @@ Both the identity-resolution domain and the person domain need to track unresolv
 
 * Both record types originate from the same source: the shared `identity_inputs` table filled by connectors
 * Both record types have identical structure: `insight_tenant_id`, `insight_source_id`, `insight_source_type`, `source_account_id`, `value_type`, `value`, plus resolution workflow fields
-* Differentiation between identity-level and person-attribute-level records is already possible via `value_type` values: identity types (`email`, `username`, `employee_id`, `platform_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.)
+* Differentiation between identity-level and person-attribute-level records is already possible via `value_type` values: identity types (`id`, `email`, `username`, `employee_id`) vs person-attribute types (`display_name`, `role`, `location`, etc.). `id` is the canonical account-binding observation per ADR-0002 (replaces the former `platform_id` for connectors where the platform identifier equals `source_account_id`).
 * Operators reviewing the unmapped queue benefit from a single view across both domains
 
 ## Considered Options
@@ -82,7 +82,7 @@ The person domain owns its own `person_unmapped` table with the same columns as 
 ## More Information
 
 The `value_type` vocabulary provides a natural partition:
-- **Identity types** (IR domain): `email`, `username`, `employee_id`, `platform_id`
+- **Identity types** (IR domain): `id`, `email`, `username`, `employee_id`
 - **Person-attribute types** (person domain): `display_name`, `role`, `location`, and future attribute types
 
 If the two domains' unmapped records diverge significantly in structure in the future (e.g., person domain needs fields that IR does not), this decision can be revisited. The migration path would be: create `person_unmapped`, backfill from `unmapped WHERE value_type IN (person-attribute types)`, update person domain writes.

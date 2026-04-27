@@ -117,6 +117,7 @@ SELECT a.*, toUnixTimestamp64Milli(now64()) AS _version FROM aliases a
 LEFT ANTI JOIN {{ this }} existing
     ON  a.value_type          = existing.value_type
     AND a.value               = existing.value
+    AND a.insight_tenant_id   = existing.insight_tenant_id
     AND a.insight_source_type = existing.insight_source_type
     AND a.source_account_id   = existing.source_account_id
     AND existing.is_deleted   = 0

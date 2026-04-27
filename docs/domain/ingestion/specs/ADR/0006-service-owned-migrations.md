@@ -107,6 +107,6 @@ MariaDB tables, or to introduce a separate mechanism alongside it.
   the source pattern this ADR generalises).
 - `src/backend/services/identity/src/migration/` — first service-
   owned migration set under this policy.
-- `docs/domain/identity-resolution/specs/ADR/0002-deterministic-person-id-for-seed.md`
+- `docs/domain/identity-resolution/specs/ADR/0002-stable-person-id-via-persons-observations.md`
   — seed contract, unchanged by this ADR (seed stays one-shot, not
   a migration).

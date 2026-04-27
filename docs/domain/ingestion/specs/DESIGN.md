@@ -768,8 +768,12 @@ See [Airbyte Connector DESIGN](../../connector/specs/DESIGN.md) for detailed deb
 ### 4.4 Schema Migrations
 
 The project persists data in two stores with two different migration
-mechanisms. Both are file-based, both are invoked from `init.sh`, but
-they diverge on bookkeeping because of different evolution patterns.
+mechanisms. **ClickHouse** schema is file-based and invoked from
+`init.sh` (cluster bootstrap path); **MariaDB** schema is service-
+owned — each backend service carries its own embedded `Migrator` and
+applies its migrations at startup (see [ADR-0006](../ADR/0006-service-owned-migrations.md)).
+The two paths diverge on bookkeeping because of different evolution
+patterns.
 
 #### 4.4.1 ClickHouse migrations
 

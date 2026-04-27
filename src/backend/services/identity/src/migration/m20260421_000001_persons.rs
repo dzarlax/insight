@@ -14,37 +14,50 @@
 //! # Column split on `persons`
 //!
 //! The identity observation "value" is split into three nullable columns
-//! with hardcoded routing by `value_type`:
+//! with hardcoded routing by `value_type` (canonical types: `id`,
+//! `email`, `username`, `display_name`; any other type is a known custom
+//! attribute and lands in the catch-all):
 //!
 //! - `value_id VARCHAR(320) COLLATE utf8mb4_bin` -- for `value_type` in
-//!   (`id`, `email`). Strict byte comparison; hot-path index target.
-//!   Size 320 covers RFC 5321/5322 maximum email length (64 local +
-//!   `@` + 255 domain).
+//!   (`id`, `email`, `username`). Strict byte comparison; hot-path index
+//!   target. Size 320 covers RFC 5321/5322 maximum email length (64
+//!   local + `@` + 255 domain).
 //! - `value_full_text VARCHAR(512) COLLATE utf8mb4_unicode_ci` -- for
 //!   `value_type = 'display_name'`. Case- and accent-insensitive for
 //!   operator search; leaves room for a future FULLTEXT index.
 //! - `value TEXT` -- catch-all for any other `value_type` (e.g.,
 //!   `employee_id`, `functional_team`, future custom attributes).
-//!   Not indexed.
+//!   Not directly indexed; uniqueness is enforced via `value_hash`.
 //!
 //! Exactly one of the three columns is non-null in each normal row.
 //! All-three-null is reserved for "attribute unset at source" events
 //! (future feature; not emitted by the initial seed).
 //!
-//! Uniqueness is enforced via a generated `value_effective` column
-//! that coalesces the three value columns, because `MariaDB` treats
-//! `NULL` as distinct in `UNIQUE` keys.
+//! # Display vs uniqueness: `value_effective` and `value_hash`
 //!
-//! # Why `VARCHAR` vs `TEXT` / declared max doesn't affect speed
+//! Two derived columns serve the two distinct concerns:
 //!
-//! `InnoDB` stores variable-length columns by actual value size (not
-//! declared max); B-tree fanout, index seeks, and disk footprint for
-//! the same content are identical across `VARCHAR(255)` / `VARCHAR(512)`
-//! / `VARCHAR(320)`. The declared max matters for temp-table sort-buffer
-//! sizing in older engines (not modern `MariaDB` 10.5+ `TempTable`) and
-//! the `UNIQUE` key length budget (3072 bytes with `innodb_large_prefix`
-//! on DYNAMIC row format). Our widest column (512 chars `utf8mb4` =
-//! 2048 bytes) is well under that budget.
+//! - `value_effective TEXT` -- human-readable coalesce of the three
+//!   value columns. NOT indexed. Use it from SELECTs when you want the
+//!   actual value without knowing the routing rules.
+//! - `value_hash CHAR(64) COLLATE ascii_bin` -- SHA-256 hex of the
+//!   coalesced value. Fixed-width, fully indexable, collision-free
+//!   regardless of value length. Used in the natural-key UNIQUE so
+//!   `INSERT IGNORE` re-runs are idempotent even for catch-all `TEXT`
+//!   values longer than any prefix limit. (A previous design used
+//!   `LEFT(value, 512)` in `value_effective`; that collapsed two
+//!   distinct long values with the same 512-char prefix into the same
+//!   UNIQUE key, losing data on `INSERT IGNORE`.)
+//!
+//! # Sub-second timestamps
+//!
+//! `created_at`, `valid_from`, `valid_to` use `TIMESTAMP(6)`
+//! (microsecond precision). `created_at` is the ordering key for the
+//! `account_person_map` SCD-2 rebuild (`LEAD(created_at) OVER (...)`)
+//! and `valid_from` is part of `account_person_map.PRIMARY KEY`, so
+//! second-precision would risk PK collisions and non-deterministic
+//! `LEAD` ordering for events landing within the same wall-clock
+//! second.
 //!
 //! See ADR-0002 (stable `person_id` + observation schema) and ADR-0006
 //! (service-owned migrations).
@@ -58,7 +71,7 @@ const CREATE_PERSONS: &str = r"
 CREATE TABLE IF NOT EXISTS persons (
     id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     value_type          VARCHAR(50)  NOT NULL
-                        COMMENT 'Attribute kind: id, email, display_name, employee_id, platform_id, ...',
+                        COMMENT 'Attribute kind: id, email, username, display_name, employee_id, platform_id, ...',
     insight_source_type VARCHAR(100) NOT NULL
                         COMMENT 'Source system: bamboohr, zoom, cursor, claude_admin, etc.',
     insight_source_id   BINARY(16)   NOT NULL
@@ -67,28 +80,31 @@ CREATE TABLE IF NOT EXISTS persons (
                         COMMENT 'Tenant UUID (sipHash from bronze tenant_id)',
 
     value_id            VARCHAR(320) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL
-                        COMMENT 'For value_type IN (id, email); strict byte comparison; hot-path index target',
+                        COMMENT 'For value_type IN (id, email, username); strict byte comparison; hot-path index target',
     value_full_text     VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL
                         COMMENT 'For value_type = display_name; case/accent-insensitive',
     value               TEXT NULL
                         COMMENT 'Catch-all for any other value_type (employee_id, functional_team, custom fields)',
 
-    value_effective     VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin
-                        GENERATED ALWAYS AS (COALESCE(value_id, value_full_text, LEFT(value, 512))) STORED
-                        COMMENT 'Generated coalesce of the three value columns; enables NULL-safe UNIQUE',
+    value_effective     TEXT
+                        GENERATED ALWAYS AS (COALESCE(value_id, value_full_text, value)) STORED
+                        COMMENT 'Human-readable coalesce of the three value columns; NOT indexed (display only)',
+    value_hash          CHAR(64) CHARACTER SET ascii COLLATE ascii_bin
+                        GENERATED ALWAYS AS (SHA2(COALESCE(value_id, value_full_text, value), 256)) STORED
+                        COMMENT 'SHA-256 hex of the routed value; used in UNIQUE for collision-free dedup',
 
     person_id           BINARY(16)   NOT NULL
                         COMMENT 'Person UUID (random UUIDv7, minted at first observation)',
     author_person_id    BINARY(16)   NOT NULL
                         COMMENT 'Person UUID of who/what made this change; system sentinel 00..0 for automatic seed',
     reason              TEXT         NOT NULL DEFAULT ''
-                        COMMENT 'Optional change reason / comment',
-    created_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
-                        COMMENT 'When this record was created (stored internally in UTC)',
+                        COMMENT 'Optional change reason / comment; pending-iresolution flags rows for the IRes operator flow',
+    created_at          TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                        COMMENT 'When this record was created (microsecond precision; stored internally in UTC)',
 
     UNIQUE KEY uq_person_observation (
         insight_tenant_id, person_id, insight_source_type, insight_source_id,
-        value_type, value_effective
+        value_type, value_hash
     ),
     INDEX idx_value_id        (insight_tenant_id, value_type, value_id),
     INDEX idx_value_full_text (insight_tenant_id, value_type, value_full_text),
@@ -130,10 +146,10 @@ CREATE TABLE IF NOT EXISTS account_person_map (
     author_person_id    BINARY(16)   NOT NULL
                         COMMENT 'Forwarded from the persons observation; 00..0 sentinel = auto-minted by seed',
     reason              VARCHAR(50)  NOT NULL
-                        COMMENT 'Why this binding was created: initial-bootstrap | new-account | operator-merge | ...',
-    valid_from          TIMESTAMP    NOT NULL
-                        COMMENT 'When this binding became current (= created_at of the persons observation)',
-    valid_to            TIMESTAMP    NULL
+                        COMMENT 'Why this binding was created: initial-bootstrap | new-account | pending-iresolution | operator-merge | ...',
+    valid_from          TIMESTAMP(6) NOT NULL
+                        COMMENT 'When this binding became current (= created_at of the persons observation; microsecond precision)',
+    valid_to            TIMESTAMP(6) NULL
                         COMMENT 'When this binding ended (= next observation created_at); NULL = current',
 
     PRIMARY KEY (insight_tenant_id, insight_source_type, insight_source_id, source_account_id, valid_from),

@@ -76,7 +76,7 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 | Term | Definition |
 |---|---|
 | Alias | An `(value_type, value)` pair identifying a person in a specific source system (e.g., `email:anna@acme.com`) |
-| Alias type | Category of identity signal: `email`, `username`, `employee_id`, `display_name`, `platform_id` |
+| Alias type | Category of identity signal: canonical `id`, `email`, `username`, `display_name`; known custom `employee_id`, `platform_id` (deprecated for Cursor/Claude Admin in favor of `id`, see ADR-0002) |
 | Bootstrap input | A row in `identity_inputs` representing one changed alias observation from one connector |
 | Confidence score | Numeric value (0.0–1.0) representing the MatchingEngine's certainty that an alias belongs to a person |
 | Auto-link | Automatic creation of an alias mapping when confidence >= 1.0 |
@@ -222,7 +222,7 @@ The system **MUST** isolate alias data by `insight_tenant_id`. A resolution requ
 
 The system **MUST** maintain a `persons` table in MariaDB that stores the history of identity field changes per person in an append-only SCD-style log. Each row represents one observed field value (`value_type`, `value`) from one source (`insight_source_type`, `insight_source_id`) assigned to a person (`person_id`) at a specific time (`created_at`). Updating a field **MUST** insert a new row rather than mutate an existing one; the current value is the row with the latest `created_at` for the `(insight_tenant_id, person_id, value_type)` triple.
 
-**Required columns**: `id`, `value_type`, `insight_source_type`, `insight_source_id`, `insight_tenant_id`, `value`, `person_id`, `author_person_id`, `reason`, `created_at`.
+Schema (the column split by `value_type` into `value_id` / `value_full_text` / `value`, the generated `value_effective` for display and `value_hash` for the natural-key UNIQUE, the SCD2 shape of `account_person_map`, and `TIMESTAMP(6)` precision) is specified in the identity-resolution DESIGN §3.7 and in [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md). The PRD intentionally states only the behavioural contract.
 
 **Rationale**: Downstream backend services (Analytics API, Identity Resolution service) need a CRUD-accessible, temporal view of person attributes from heterogeneous sources — ClickHouse is optimised for analytical reads, not operator-driven edits. MariaDB with row-level history supports conflict-resolution UX, audit trails, and operator-driven corrections.
 
@@ -235,13 +235,13 @@ The system **MUST** maintain a `persons` table in MariaDB that stores the histor
 The system **MUST** provide a re-runnable bootstrap mechanism that populates `persons` from `identity_inputs` with the following behavioural guarantees:
 
 - **Email as identity anchor**: each source-account's email observation uniquely identifies a person within a tenant; source-accounts without an email **MUST** be skipped.
-- **Deterministic identity assignment**: the same `(tenant, normalised email)` pair **MUST** always resolve to the same `person_id` across runs, so the same person is shared across every source-account that uses the same email and across repeated executions.
+- **Stable identity assignment**: within an initial-bootstrap run, source-accounts sharing a normalised email within a tenant are assigned one randomly-minted `person_id` (UUIDv7); once assigned, the binding is never re-derived from mutable attributes and survives re-runs. See [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md).
 - **Idempotent re-run**: running the bootstrap on identical input **MUST NOT** add any rows; running after a new connector sync **MUST** add only the newly observed rows without losing or duplicating prior ones.
 - **Non-destructive**: the bootstrap **MUST NOT** delete, truncate, or otherwise remove rows from `persons`. Re-seeding from scratch is an explicit operator action outside the bootstrap.
 
 **Rationale**: Bootstraps the `persons` table with every person who has an email anchor across configured connectors. Email is the single authoritative cross-source identity key in Phase 1 (matching rules come in Phase 3). The deterministic-identity + idempotent-re-run guarantees together mean the bootstrap is safe to execute after every connector sync without duplicating data or wiping operator-authored rows.
 
-Schema of `persons`, UNIQUE-key structure, deterministic key derivation, and script layout are specified in the identity-resolution DESIGN §3.7 "Table: `persons`" and in [ADR-0002](ADR/0002-deterministic-person-id-for-seed.md).
+Schema of `persons`, UNIQUE-key structure, `person_id` minting (random UUIDv7), and script layout are specified in the identity-resolution DESIGN §3.7 "Table: `persons`" and in [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md).
 
 **Actors**: `cpt-ir-actor-analytics-pipeline`
 

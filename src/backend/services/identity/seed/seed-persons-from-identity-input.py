@@ -75,6 +75,36 @@ from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
 
 
+def _format_synced_at(synced_at: object, fallback: str) -> str:
+    """Coerce the `_synced_at` field from identity_inputs into the
+    `YYYY-MM-DD HH:MM:SS.ffffff` text form MariaDB expects for a
+    TIMESTAMP(6) column. ClickHouse returns DateTime as either an ISO
+    string (`2026-04-22T08:39:30Z`) or a space-separated string
+    depending on FORMAT — we accept both and normalize.
+
+    Falls back to the wall-clock time only when the value is missing
+    or unparsable (which would indicate an ingestion-pipeline bug,
+    not a normal path).
+    """
+    if synced_at is None:
+        return fallback
+    s = str(synced_at).strip()
+    if not s:
+        return fallback
+    # ClickHouse DateTime via JSONEachRow comes as 'YYYY-MM-DD HH:MM:SS'
+    # (no fractional). DateTime64 may include `.fff` or `.ffffff`. ISO
+    # form 'YYYY-MM-DDTHH:MM:SS[.f...]Z' also possible.
+    try:
+        s_norm = s.replace("T", " ").rstrip("Z")
+        # Ensure microsecond precision
+        dt = datetime.fromisoformat(s_norm)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    except (ValueError, TypeError):
+        return fallback
+
+
 def uuid7() -> uuid.UUID:
     """Generate a UUIDv7 per RFC 9562: 48-bit ms timestamp + random bits.
 
@@ -406,9 +436,15 @@ def main():
     # 6. Build INSERT rows for persons observations.
     #    Hardcoded routing per value_type populates exactly one of
     #    (value_id, value_full_text, value); the other two are NULL.
-    #    For value_type='id' we also normalize the value from the
-    #    identity_inputs source_account_id carried on the observation.
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.000")
+    #    `created_at` is taken from each observation's `_synced_at`
+    #    (the moment the source actually saw this value), not from
+    #    the wall-clock time of this seed run. That preserves the
+    #    chronological ordering inside `persons` and makes the SCD-2
+    #    rebuild's LEAD(created_at) over multiple historical
+    #    observations of the same account well-defined.
+    fallback_now = datetime.now(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S.%f"  # microsecond precision for TIMESTAMP(6)
+    )
     insert_rows = []
     oversized_value_id        = 0
     oversized_value_full_text = 0
@@ -442,6 +478,11 @@ def main():
                 elif obs["value_type"] in VALUE_TYPES_FOR_VALUE_FULL_TEXT:
                     oversized_value_full_text += 1
                 continue
+            # Per-observation timestamp from the source-recorded
+            # _synced_at; falls back to the seed wall-clock only for
+            # rows where the field is missing/unparsable (an
+            # ingestion-pipeline bug, not a silent dataloss path).
+            row_created_at = _format_synced_at(obs.get("_synced_at"), fallback_now)
             insert_rows.append((
                 obs["value_type"],
                 source_type,
@@ -453,7 +494,7 @@ def main():
                 person_bin,
                 author_bin,
                 reason_for_account,
-                now,
+                row_created_at,
             ))
 
     print(f"  Rows to insert (pre-dedup): {len(insert_rows)}")
