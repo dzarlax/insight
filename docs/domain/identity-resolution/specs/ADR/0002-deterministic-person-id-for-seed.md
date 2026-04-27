@@ -102,9 +102,29 @@ This ADR records:
    observation that opened the period, and `valid_to = created_at`
    of the next observation (NULL for the currently-active binding).
 
-   Rebuild is atomic (`TRUNCATE` + `INSERT ... SELECT ... LEAD()
-   OVER (...)` inside one transaction). Drift relative to `persons`
-   is impossible by construction.
+   Rebuild uses an **atomic two-table swap**. MariaDB `TRUNCATE` is
+   DDL and implicitly commits, so it cannot participate in a
+   transaction; a `TRUNCATE` + `INSERT ... SELECT` sequence would
+   leave the table observably empty between the implicit `TRUNCATE`
+   commit and the `INSERT` completion, and a crash in that window
+   would orphan the cache as empty. Instead the seed builds the new
+   state into a sibling table `account_person_map_next` and swaps
+   atomically:
+
+   ```sql
+   CREATE TABLE account_person_map_next LIKE account_person_map;
+   INSERT INTO account_person_map_next
+     SELECT ..., LEAD(created_at) OVER (...) AS valid_to
+     FROM persons WHERE value_type = 'id';
+   RENAME TABLE
+     account_person_map      TO account_person_map_old,
+     account_person_map_next TO account_person_map;
+   DROP TABLE account_person_map_old;
+   ```
+
+   The `RENAME TABLE` pair is atomic in MariaDB; concurrent readers
+   see either the old or the new map, never an empty intermediate.
+   Drift relative to `persons` is impossible by construction.
 
 6. **The seed has three modes**, detected at runtime from the state
    of `persons`:
@@ -125,11 +145,17 @@ This ADR records:
 
    - If its email is **absent** from `persons` (any `person_id`):
      mint a new `person_id` and write observations.
-     `reason = 'new-account'`.
+     `reason = ''` (default for non-pending observations).
    - If its email is **present** in `persons` (any `person_id`):
-     **skip the entire account**. Linking this new source-account to
-     an existing person is deferred to the Identity-Resolution flow
-     (future PR, separate from this seed).
+     **mint a fresh isolated `person_id`** — visibly NOT merged with
+     the existing email-bearer — and write observations with
+     `reason = 'pending-iresolution'`. Each pending account gets
+     its own `person_id` (no intra-run automerge among pending
+     accounts) so the future Identity-Resolution operator flow has
+     per-account granularity. The IRes flow scans for
+     `reason='pending-iresolution'` rows and prompts the operator
+     for a per-account decision (link to existing email-bearer /
+     keep separate / merge).
 
 7. **Observations in `persons` are always written against the
    `person_id` determined by the mode above.** Writes use `INSERT
@@ -200,15 +226,29 @@ This ADR records:
   (possibly via the `account_person_map` cache) — never any other
   structure.
 
-- **New source enrollment does not auto-merge into existing persons.**
-  The first time a previously-unseen `(source_type, source_id)`
-  appears in `identity_inputs`, each of its source-accounts is
-  evaluated independently against existing `persons` emails. If the
-  email is present, the account is skipped (pending IRes). If the
-  email is absent, a fresh `person_id` is minted. This is intentional
-  and matches the design direction that all non-trivial cross-source
-  merging goes through operator review rather than silent
-  rebindings.
+- **New source enrollment does not auto-merge into existing persons,
+  but it also does not silently drop data.** The first time a
+  previously-unseen `(source_type, source_id)` appears in
+  `identity_inputs`, each of its source-accounts is evaluated
+  independently against existing `persons` emails. If the email is
+  absent, a fresh `person_id` is minted. If the email is present,
+  the account also gets a fresh isolated `person_id` (not merged
+  with the existing email-bearer) and its observations are tagged
+  `reason='pending-iresolution'` for later operator review. The
+  alternative — silently skipping the account — would leave the
+  second-and-beyond connector per tenant effectively a no-op in
+  `persons` until the IRes operator flow ships, which is an
+  unacceptable operational gap during the transition. Pending
+  observations preserve all source data and give the future IRes
+  flow concrete per-account work (link / keep-separate / merge).
+
+- **The IRes operator flow scans for `reason='pending-iresolution'`
+  rows in `persons`** to drive the per-account review queue. The
+  flow's resolution writes a new `value_type='id'` observation
+  (with the resolved `person_id`, `author_person_id` = the operator,
+  and `reason` reflecting the decision); the next
+  `account_person_map` rebuild picks up the new latest binding.
+  Pending observations stay in `persons` as historical record.
 
 - **`value_type='platform_id'` is deprecated** for Cursor and Claude
   Admin (replaced by `value_type='id'`, carrying the same value).

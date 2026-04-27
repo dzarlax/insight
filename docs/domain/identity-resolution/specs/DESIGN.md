@@ -32,6 +32,7 @@
   - [REC-IR-02: Incremental watermark for identity inputs (Phase 2)](#rec-ir-02-incremental-watermark-for-identity-inputs-phase-2)
   - [REC-IR-03: Shared unmapped table for all domains — RESOLVED](#rec-ir-03-shared-unmapped-table-for-all-domains--resolved)
   - [REC-IR-04: Temporary tenant and source ID derivation via sipHash128 (Phase 1)](#rec-ir-04-temporary-tenant-and-source-id-derivation-via-siphash128-phase-1)
+  - [REC-IR-05: Explicit canonical id emission per connector (Phase 2)](#rec-ir-05-explicit-canonical-id-emission-per-connector-phase-2)
 - [6. Traceability](#6-traceability)
 
 <!-- /toc -->
@@ -817,11 +818,13 @@ Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (late
 - **"Current binding"**: `WHERE valid_to IS NULL`.
 - **"Binding as of date T"**: `WHERE valid_from <= T AND (valid_to > T OR valid_to IS NULL)` — one row per source-account, O(log N) range lookup.
 - **"Full history of an account"**: all rows with the account's PK tuple, ordered by `valid_from`.
-- **Rebuild** (at the end of every seed run + every future operator flow):
+- **Rebuild** (at the end of every seed run + every future operator flow) — **atomic two-table swap**. MariaDB `TRUNCATE` is DDL and implicitly commits, so it cannot participate in a transaction; the seed builds the new state into a sibling `account_person_map_next` and atomically swaps with `RENAME TABLE`:
   ```sql
-  TRUNCATE TABLE account_person_map;
-  INSERT INTO account_person_map (tenant, source_type, source_id, source_account_id,
-                                   person_id, author_person_id, reason, valid_from, valid_to)
+  CREATE TABLE account_person_map_next LIKE account_person_map;
+
+  INSERT INTO account_person_map_next
+      (insight_tenant_id, insight_source_type, insight_source_id, source_account_id,
+       person_id, author_person_id, reason, valid_from, valid_to)
   SELECT
       insight_tenant_id, insight_source_type, insight_source_id,
       value_id AS source_account_id,
@@ -832,8 +835,13 @@ Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (late
           ORDER BY created_at
       ) AS valid_to
   FROM persons WHERE value_type = 'id' AND value_id IS NOT NULL;
+
+  RENAME TABLE
+      account_person_map      TO account_person_map_old,
+      account_person_map_next TO account_person_map;
+  DROP TABLE account_person_map_old;
   ```
-  Atomic (single transaction); the cache is briefly empty during the rebuild but no external reader observes partial state.
+  The `RENAME TABLE` pair is atomic in MariaDB; concurrent readers see either the old or the new map, never an empty intermediate.
 
 See ADR-0002 for the full decision record (why a derived cache instead of a second authoritative table, alternatives considered).
 
@@ -869,15 +877,12 @@ operate on the already-created table; they never issue `CREATE`,
 1. Read all rows from `identity.identity_inputs` (ClickHouse) where `operation_type = 'UPSERT'` and `value` is non-empty. Order by `_synced_at DESC` within each source-account so that the latest email observation is picked deterministically in step 5.
 2. Group observations by `(insight_tenant_id, insight_source_type, insight_source_id, source_account_id)` — a "source account" = one user in one connector instance.
 3. Connect to MariaDB. Load known bindings: for each source-account key, find the latest `value_type='id'` observation in `persons` and capture its `person_id`. This becomes the **known-account** set.
-4. Load existing emails: run `SELECT insight_tenant_id, LOWER(TRIM(value_id)) FROM persons WHERE value_type='email' AND value_id IS NOT NULL AND value_id != ''` and collect into a `(tenant, normalized_email)` set. Mode is determined by the set:
-   - **Initial bootstrap** — set is empty (no emails observed for any tenant yet).
-   - **Steady-state** — set has at least one email; at least one prior seed/operator action populated `persons`.
+4. Load existing emails: run `SELECT insight_tenant_id, LOWER(TRIM(value_id)) FROM persons WHERE value_type='email' AND value_id IS NOT NULL AND value_id != ''` and collect into a `(tenant, normalized_email)` set. The set is empty on the very first run (initial bootstrap) and non-empty afterwards; the same code path handles both — there is no mode flag.
 5. For each source-account in `identity_inputs`:
    - **Known account** (present in step 3 set): reuse the mapped `person_id`. Observations go to `persons` via `INSERT IGNORE` (dedupe on UNIQUE key); no new binding.
-   - **Unknown account, no email observed**: skip. Email remains the sole identity anchor for bootstrap.
-   - **Unknown account, initial-bootstrap mode**: accounts sharing the same normalised email within a tenant get **one** `person_id` (random UUIDv7, minted once per unique email in this run). `reason='initial-bootstrap'`.
-   - **Unknown account, steady-state mode, email absent in step 4 set**: mint a new `person_id` (random UUIDv7). `reason='new-account'`. Within the same run, two new accounts sharing this new email still share one `person_id` (email-automerge within the run).
-   - **Unknown account, steady-state mode, email already present in step 4 set**: **skip the entire account**. Linking this new source-account to an existing person is the job of the Identity-Resolution flow (future PR). `reason='skip-email-exists'` in the skip counter log.
+   - **Unknown account, no email observed**: skip. Email remains the sole identity anchor for this seed.
+   - **Unknown account, email absent from step 4 set**: mint a new `person_id` (random UUIDv7). `reason=''`. Within the same run, two new accounts sharing this new email still share one `person_id` (email-automerge within the run); on a fresh-tenant run this is the initial-bootstrap behaviour as a special case.
+   - **Unknown account, email already present in step 4 set**: **mint a fresh isolated `person_id`** (visibly NOT merged with the existing email-bearer) and write all observations with `reason='pending-iresolution'`. Each pending account gets its own `person_id` (no intra-run automerge among pending accounts), so the future Identity-Resolution operator flow has per-account granularity. The IRes flow scans for `reason='pending-iresolution'` rows and prompts a per-account decision (link to existing email-bearer / keep separate / merge).
 6. Write observations to `persons` via `INSERT IGNORE`. Routing rules (hardcoded in the seed, mirrored by the dbt macro):
    - `value_type IN ('id', 'email')` → `value_id = value`, others NULL
    - `value_type = 'display_name'` → `value_full_text = value`, others NULL
@@ -1434,6 +1439,24 @@ Phase 1 seed and connector models derive `insight_tenant_id` (UUID) and `insight
 - `dbt/identity/seed_aliases_from_cursor.sql`, `seed_aliases_from_claude_admin.sql` — use it in tenant-scoped JOINs
 - `dbt/identity/seed_identity_input_from_cursor.sql`, `seed_identity_input_from_claude_admin.sql` — compute the hash
 - `scripts/adhoc/seed_from_cursor_manual.sql`, `scripts/adhoc/seed_from_claude_admin_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
+
+### REC-IR-05: Explicit canonical id emission per connector (Phase 2)
+
+**Status**: deferred to follow-up PR.
+
+**Context**: the `identity_input_from_history` dbt macro currently emits the canonical `value_type='id'` binding observation via two implicit CTEs (`id_upserts`, `id_deletes`) in addition to the per-field `upserts`/`deletes` blocks driven by the connector's `identity_fields` list. Connectors that go through the macro (BambooHR, Zoom, future) get this row automatically; connectors that bypass the macro (`seed_identity_input_from_cursor`, `seed_identity_input_from_claude_admin`, plus the `scripts/adhoc/seed_from_*_manual.sql` companions) emit it explicitly as a UNION-ALL branch. The contract that "every connector emits a `value_type='id'` observation" is therefore convention-driven, not declarative at the call site.
+
+**Why follow up**: a connector author looking at `zoom__identity_input.sql` sees `identity_fields=[email, employee_id, display_name]` and no mention of the account identifier itself. The relationship is invisible without reading the macro. The macro also hardcodes `value_field_name = '{source_type}.entity_id'` for the implicit row instead of the canonical `bronze_<src>.<table>.id` path that explicit entries produce elsewhere.
+
+**Recommended Phase-2 cleanup**:
+
+1. Add `{'field': 'id', 'value_type': 'id', 'value_field_name': 'bronze_<src>.<table>.id'}` explicitly to every connector's `identity_fields` list — Bamboo, Zoom, and any future macro-using connector.
+2. Remove `id_upserts` / `id_deletes` from `identity_input_from_history`. The per-field `upserts` / `deletes` blocks already handle every declared field uniformly, so the macro becomes simpler and the connector's contract becomes fully explicit.
+3. Validate in CI (or in the macro itself) that every connector's `identity_fields` contains exactly one entry with `value_type='id'` — turns the convention into an enforceable contract.
+
+**Why not now**: orthogonal to the schema split, SCD2 cache, and email-conflict policy work in this PR. Bundling would balloon the diff and mix code-style concerns with semantic ones. No bug today — the canonical row IS emitted correctly for every existing connector (verified file-by-file).
+
+**Source**: mitasovr review on commit `bec6c98`, Zoom-thread clarification on `zoom__identity_input.sql:15`.
 
 ## 6. Traceability
 

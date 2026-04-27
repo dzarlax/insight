@@ -37,9 +37,13 @@ and degenerates to bootstrap when persons is empty):
    person_id (email-automerge is naturally scoped to the run). See
    ADR-0002.
 
-3. Unknown account, email PRESENT in persons. SKIP the entire account.
-   Linking this new source-account to an existing person is the job of
-   the future identity-resolution flow (out of scope for this seed).
+3. Unknown account, email PRESENT in persons. Mint a fresh isolated
+   UUIDv7 (visibly NOT merged with the existing email-bearer); write
+   observations with reason='pending-iresolution' so the future
+   identity-resolution operator flow scans them and prompts a per-
+   account decision (link / keep-separate / merge). Each pending
+   account gets its own person_id (no intra-run automerge among
+   pending accounts) so IRes has per-account granularity.
 
 Prerequisites:
   - ClickHouse identity.identity_inputs view exists (run dbt first)
@@ -313,23 +317,29 @@ def main():
     #      new UUIDv7; within this run, two new accounts sharing a new
     #      email share one person_id (email-automerge within the run).
     #    - Unknown accounts whose email is already present in persons
-    #      are skipped entirely -- cross-source linking is operator-
-    #      driven work for the future identity-resolution flow.
+    #      get a fresh isolated UUIDv7 (visibly NOT merged with the
+    #      existing email-bearer) and observations are tagged with
+    #      reason='pending-iresolution' so the future identity-
+    #      resolution operator flow can pick them up for review/link.
+    #      No intra-run automerge among pending accounts -- each gets
+    #      its own person_id, leaving IRes per-account granularity.
     #
     #    Accounts without an email observation are skipped -- email is
     #    the sole identity anchor for this seed.
     email_to_new_person: dict[tuple[str, str], uuid.UUID] = {}
     account_person: dict[tuple, uuid.UUID] = {}
+    account_reason: dict[tuple, str] = {}    # '' or 'pending-iresolution'
 
     reused_from_persons       = 0
     minted                    = 0
+    pending_iresolution       = 0
     skipped_no_email          = 0
-    skipped_email_exists      = 0
     skipped_oversized_account = 0
 
     for key, obs_list in accounts.items():
         if key in known_accounts:
             account_person[key] = known_accounts[key]
+            account_reason[key] = ""
             reused_from_persons += 1
             continue
 
@@ -355,11 +365,23 @@ def main():
         email_key = (tenant_id, email_normalized)
 
         if email_key in existing_emails:
-            # IRes-territory: this email is already bound to a person
-            # in persons. Deciding whether to link this new account to
-            # that person (same user? different user same email?) is
-            # operator-driven work deferred to the future flow.
-            skipped_email_exists += 1
+            # IRes-territory: this email is already bound to an
+            # existing person in persons. Per ADR-0002 the seed does
+            # NOT silently merge -- but it also no longer drops the
+            # data. Mint a fresh isolated person_id (visibly NOT
+            # merged with the existing email-bearer); observations
+            # carry reason='pending-iresolution' so the future IRes
+            # flow scans these and prompts a per-account decision
+            # (link to email-bearer / keep separate / merge).
+            #
+            # Per-account fresh person_id (option alpha from review
+            # thread): no intra-run automerge among pending accounts,
+            # so IRes gets per-account granularity rather than
+            # presupposing intra-run merges.
+            person_uuid = uuid7()
+            account_person[key] = person_uuid
+            account_reason[key] = "pending-iresolution"
+            pending_iresolution += 1
             continue
 
         # Email is new in persons. Mint (or reuse from this run's
@@ -371,11 +393,12 @@ def main():
             minted += 1
 
         account_person[key] = person_uuid
+        account_reason[key] = ""
 
     print(
         f"  Accounts: reused={reused_from_persons}, minted={minted}, "
-        f"skipped-no-email={skipped_no_email}, "
-        f"skipped-email-exists={skipped_email_exists}"
+        f"pending-iresolution={pending_iresolution}, "
+        f"skipped-no-email={skipped_no_email}"
     )
     if skipped_oversized_account:
         print(f"  Accounts skipped -- source_account_id > {MAX_SOURCE_ACCOUNT_ID_LEN} characters: {skipped_oversized_account}")
@@ -407,6 +430,7 @@ def main():
         source_bin = uuid.UUID(source_id_str).bytes
         person_bin = person_id.bytes
         author_bin = SYSTEM_AUTHOR_UUID.bytes  # seed-minted -> system sentinel
+        reason_for_account = account_reason.get(key, "")
 
         for obs in obs_list:
             v_id, v_ft, v_any = route_value(obs["value_type"], obs["value"])
@@ -428,7 +452,7 @@ def main():
                 v_any,
                 person_bin,
                 author_bin,
-                "",     # reason
+                reason_for_account,
                 now,
             ))
 
@@ -465,17 +489,22 @@ def main():
     skipped_dups = len(insert_rows) - added
     print(f"  Added: {added}, skipped as duplicates: {skipped_dups}, total: {existing_after}")
 
-    # 8. Rebuild account_person_map from persons (SCD2).
-    #    The map is never the source of truth -- persons is. Every
-    #    value_type='id' observation becomes a binding row with
-    #    valid_from = its created_at; valid_to = LEAD(created_at) over
-    #    the same account (NULL for the latest binding). Truncate +
-    #    re-INSERT in one transaction eliminates drift by construction.
+    # 8. Rebuild account_person_map from persons (SCD2) via two-table
+    #    swap. MariaDB TRUNCATE is DDL and implicitly commits, so it
+    #    cannot participate in a transaction; the previous TRUNCATE +
+    #    INSERT...SELECT sequence was not actually atomic and left the
+    #    table observably empty between the implicit commit and the
+    #    INSERT completion. Build into a sibling table and atomically
+    #    swap with RENAME TABLE: readers see either the old or the new
+    #    contents, never an empty intermediate. The old table is
+    #    dropped after the swap and serves as a free rollback artifact
+    #    if anything in the rename pair fails.
     print("  Rebuilding account_person_map from persons (value_type='id')...")
-    cursor.execute("TRUNCATE TABLE account_person_map")
+    cursor.execute("DROP TABLE IF EXISTS account_person_map_next")
+    cursor.execute("CREATE TABLE account_person_map_next LIKE account_person_map")
     cursor.execute(
         """
-        INSERT INTO account_person_map
+        INSERT INTO account_person_map_next
             (insight_tenant_id, insight_source_type, insight_source_id, source_account_id,
              person_id, author_person_id, reason, valid_from, valid_to)
         SELECT
@@ -496,6 +525,14 @@ def main():
         WHERE value_type = 'id' AND value_id IS NOT NULL
         """
     )
+    # Atomic swap. RENAME TABLE pair is atomic in MariaDB; readers
+    # see either the old or the new map, never an empty in-between.
+    cursor.execute(
+        "RENAME TABLE "
+        "  account_person_map      TO account_person_map_old, "
+        "  account_person_map_next TO account_person_map"
+    )
+    cursor.execute("DROP TABLE account_person_map_old")
     conn.commit()
 
     # Summary
