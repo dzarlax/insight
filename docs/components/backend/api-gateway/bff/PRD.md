@@ -220,19 +220,17 @@ The SPA uses `refresh_at` to schedule its next call. `GET /auth/me` **MUST** ret
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-bff-session-store`
 
-The system **MUST** store every session in Redis using BFF-owned key prefixes:
+The system **MUST**:
 
-1. `bff:session:{session_id}` -- the session record: `user_id`, `tenant_id`, IdP `sub`, IdP `iss`, IdP `sid`, IdP access token, IdP refresh token, IdP access-token expiry, `created_at`, `expires_at`, `absolute_expires_at`, `user_agent`, `ip`, `csrf_token`. Redis TTL matches `expires_at`.
-2. `bff:user_sessions:{user_id}` -- a Redis **sorted set** whose members are the user's `session_id` values and whose **score is `expires_at`** (epoch seconds). This lets the BFF:
-   - List active sessions: `ZRANGEBYSCORE bff:user_sessions:{uid} <now> +inf`.
-   - Find expired entries: `ZRANGEBYSCORE bff:user_sessions:{uid} 0 <now>` (cleaned up by the janitor; see 5.4 below).
-3. `bff:sid_index:{iss}:{idp_sid}` -- a Redis set used to resolve OIDC back-channel logout tokens to local sessions.
+1. **Persist sessions** -- record every active session server-side with all fields needed to validate, refresh, and revoke it (user, tenant, IdP linkage, timestamps, hard cap, CSRF token, request fingerprint). The store is Redis; key family `bff:session:*`.
+2. **Maintain a per-user session index** that lets the BFF look up every active session for a given user in sub-linear time. Used by the "list my devices" and "log out everywhere" flows. Key family `bff:user_sessions:*`.
+3. **Maintain an IdP-sid lookup** that resolves an `(iss, idp_sid)` pair (carried in OIDC back-channel logout tokens) to the matching local session(s). Key family `bff:sid_index:*`.
+4. **Make create / refresh / revoke atomic** -- a partial failure **MUST NOT** leave the session record and the indexes out of sync.
+5. **Run a periodic janitor** that removes expired entries from the user-session index and emits a metric on any drift between the index and the underlying session records.
 
-Create, refresh, and revoke operations **MUST** mutate `bff:session:*` and `bff:user_sessions:*` atomically (Lua script or `MULTI`).
+The exact Redis schema (field list, sorted-set scoring, atomicity mechanism, janitor interval and Lua scripts) is specified in [DESIGN §3.7](./DESIGN.md#37-database-schemas--tables). The PRD only states *what* must hold; *how* it is implemented is the DESIGN's job.
 
-The system **MUST** run a periodic janitor that scans `bff:user_sessions:*`, removes members whose score is in the past, and emits a metric on drift between the index and the underlying records.
-
-**Rationale**: Score-by-expiry gives O(log N) lookup of expired entries, which a plain set cannot. The `bff:` prefix avoids key-name collisions with the Router (`router:jwt_cache:*`) or any future module sharing the same Redis.
+**Rationale**: Server-side storage is what makes sessions revocable. The per-user index is what makes "list devices" and "revoke all" fast. The IdP-sid index is what makes back-channel logout work. Atomicity prevents zombie sessions. The janitor keeps the index honest.
 
 **Actors**: `cpt-insightspec-actor-redis`
 
