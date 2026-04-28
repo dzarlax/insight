@@ -384,6 +384,18 @@ traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
 kind = "PRD"
+path = "docs/components/deployment/specs/PRD.md"
+name = "Deployment PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/deployment/specs/DESIGN.md"
+name = "Deployment Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "PRD"
 path = "docs/components/backend/specs/PRD.md"
 name = "Backend PRD"
 traceability = "DOCS-ONLY"
