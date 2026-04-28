@@ -218,7 +218,6 @@ graph LR
         CFGW[ConfigMap Watcher]
         KEYW[Secret Watcher]
         KS[Key Store]
-        EVTSUB[Claims Event Subscriber]
     end
 
     subgraph Shared
@@ -232,7 +231,7 @@ graph LR
     CFGW --> ROUTE
     KEYW --> KS
     JWKS --> KS
-    EVTSUB -->|invalidate jwt_cache:sid| MINT
+    BFF[(BFF revoke flow)] -.DEL router:jwt_cache:sid.-> REDIS
 
     ROUTE --> AUTH
     AUTH --> MINT
@@ -289,7 +288,7 @@ Does not refresh IdP access tokens. Does not validate JWTs (downstream services 
 
 ##### Related components (by ID)
 - `cpt-insightspec-component-router-keystore` -- supplies the signing key.
-- `cpt-insightspec-component-router-claims-sub` -- invalidates this cache on user-level events.
+- `cpt-insightspec-component-bff-auth-controller` -- invalidates this cache by `DEL router:jwt_cache:{sid}` on session revoke (shared Redis, same Lua script as BFF revoke).
 
 #### Request Rewriter
 
@@ -373,22 +372,7 @@ Does not run rotation policy itself -- the operator triggers rotation by editing
 - `cpt-insightspec-component-router-jwt-minter` -- consumer of signing keys.
 - `cpt-insightspec-component-router-jwks` -- consumer of public keys.
 
-#### Claims Event Subscriber
-
-- [ ] `p2` - **ID**: `cpt-insightspec-component-router-claims-sub`
-
-##### Why this component exists
-Without it, a user-level change (revoke, role change in future versions) would not invalidate cached gateway JWTs until the cache TTL expired.
-
-##### Responsibility scope
-Subscribe to a Redpanda topic where the BFF publishes session-revoke events. On event, delete `router:jwt_cache:{sid}` for the affected session(s). Will also subscribe to Identity-Service claims-change events when role/license claims are added in a future version.
-
-##### Responsibility boundaries
-Does not modify session state. Does not republish events. Skips events older than `2 × jwt_ttl` -- by then any cached JWT is already expired.
-
-##### Related components (by ID)
-- `cpt-insightspec-component-router-jwt-minter` -- owner of the cache being invalidated.
-- `cpt-insightspec-component-bff-auth-controller` -- producer of the revoke events.
+> **Note on cache invalidation**: There is no Router-side subscriber. The Router and BFF share the same Redis instance, so the BFF's revoke flow performs `DEL router:jwt_cache:{sid}` directly inside the same Lua script that drops the session record. No Redpanda, no in-process callback, no eventual-consistency window beyond the single Redis round-trip.
 
 ### 3.3 API Contracts
 
@@ -404,7 +388,7 @@ The Router exposes the **Reverse Proxy** and **JWKS** interfaces declared in [PR
 | Dependency | Interface | Purpose |
 |---|---|---|
 | BFF Session Manager (sibling) | Rust crate | Read-only session validation; no RPC |
-| BFF Auth Controller | None (cross-module function call) | Sender of session-revoke events; consumed via Redpanda subscriber |
+| BFF Auth Controller | Shared Redis | Invalidates `router:jwt_cache:{sid}` directly during the BFF revoke Lua script. No RPC, no Redpanda. |
 | Audit Service | Redpanda producer | Emit config-reload, key-rotation, suspicious-event audit records |
 
 ### 3.5 External Dependencies
@@ -519,23 +503,22 @@ sequenceDiagram
     KS->>J: publish current only
 ```
 
-#### Claims-change cache busting
+#### Cache busting on session revoke
 
-**ID**: `cpt-insightspec-seq-router-claims-bust`
+**ID**: `cpt-insightspec-seq-router-cache-bust`
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant IS as Identity Service
-    participant RP as Redpanda
-    participant ES as Claims Event Subscriber
-    participant RD as Redis
+    actor U as Browser
+    participant B as BFF
+    participant RD as Redis (shared)
+    participant R as Router
 
-    IS->>RP: publish ClaimsChanged{user_id}
-    RP-->>ES: event
-    ES->>RD: ZRANGEBYSCORE bff:user_sessions:{user_id} <now> +inf
-    RD-->>ES: [sid1, sid2, ...]
-    ES->>RD: DEL router:jwt_cache:{sid1..N}
+    U->>B: DELETE /auth/sessions/{sid}
+    B->>RD: EVAL revoke_session.lua<br/>DEL bff:session:{sid}<br/>ZREM bff:user_sessions:{uid} sid<br/>DEL router:jwt_cache:{sid}
+    RD-->>B: OK
+    Note over R,RD: Next /api/* request for {sid}<br/>finds router:jwt_cache:{sid} missing,<br/>but bff:session:{sid} also missing,<br/>so Cookie Auth returns 401 first.
 ```
 
 ### 3.7 Database schemas & tables
@@ -711,7 +694,7 @@ Audit (via Audit Service): config reload (with diff), key rotation, JWKS fetch f
 
 **Why**:
 - Multi-pod deployment -- in-memory cache hit rate degrades with replicas.
-- Claims-change events from Identity Service can invalidate every pod's cache by deleting one Redis key.
+- Cache invalidation is a single `DEL` from the BFF on shared Redis -- works regardless of replica count, reaches every pod's view immediately, no per-pod fan-out.
 - Cache miss cost is one EdDSA sign (~50 µs), so even with no cache the system would work; Redis cache mainly cuts pressure under bursts.
 
 **Consequences**: One extra Redis call per request. Measured at <1 ms p99, well inside the latency budget.

@@ -178,11 +178,11 @@ For every forwarded request, the system **MUST** attach a gateway JWT signed wit
 - Carry exactly the claims defined in the contract: required JWT claims `iss`, `aud`, `sub`, `iat`, `exp`, `jti`; Insight custom claims `tid`, `sid`. No `lic` / `roles` / `scopes` in v1. See [BFF DESIGN §3.8](../bff/DESIGN.md#38-gateway-jwt-claim-contract).
 - Have `exp - iat` between 60 and 300 seconds.
 
-The system **MUST** cache the minted JWT in Redis (`jwt_cache:{session_id}`) with TTL = `min(60s, jwt_remaining)`. Cache hits **MUST** skip the signing step.
+The system **MUST** cache the minted JWT in Redis (`router:jwt_cache:{session_id}`) with TTL = `min(60s, jwt_remaining)`. Cache hits **MUST** skip the signing step.
 
-The system **MUST** invalidate the JWT cache for a session when it receives a claims-change event for that user from the Identity Service event stream.
+The cache **MUST** be invalidated by the BFF deleting `router:jwt_cache:{sid}` on shared Redis as part of the session-revoke Lua script. The Router itself runs no subscriber and uses no event stream for this purpose. v1 has no other invalidation source -- the JWT carries only `sub`, `tid`, and `sid`, none of which change during an active session.
 
-**Rationale**: A signed JWT per request is the zero-trust contract. Caching keeps mint cost low under load. Event-based invalidation keeps stale claims to seconds, not minutes.
+**Rationale**: A signed JWT per request is the zero-trust contract. Caching keeps mint cost low under load. Direct Redis DEL by the BFF makes revoke-driven invalidation a single Redis round-trip with no eventual-consistency window.
 
 **Actors**: `cpt-insightspec-actor-downstream-service`, `cpt-insightspec-actor-redis`
 
@@ -448,7 +448,6 @@ If Redis is unreachable, signing keys are missing, or the route table is empty, 
 | Redis | Session reads + JWT cache | `p1` |
 | K8s ConfigMap | Route table source | `p1` |
 | K8s Secret | Signing keys source | `p1` |
-| Identity Service event stream | Claims-change events that bust JWT cache | `p2` |
 | Downstream services | Targets of forwarded requests | `p1` |
 
 ## 11. Assumptions

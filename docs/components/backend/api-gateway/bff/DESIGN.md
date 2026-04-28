@@ -70,7 +70,7 @@ The BFF is built on **cyberfabric-core ModKit** (same framework as the rest of t
 | `cpt-insightspec-fr-bff-session-refresh` | `POST /auth/refresh` runs Lua script that extends `bff:session:{id}` and updates `ZADD` score |
 | `cpt-insightspec-fr-bff-session-store` | `bff:session:{id}` HASH + `bff:user_sessions:{user_id}` ZSET with score = `expires_at` |
 | `cpt-insightspec-fr-bff-session-list` | `ZRANGEBYSCORE bff:user_sessions:{uid} <now> +inf` |
-| `cpt-insightspec-fr-bff-session-revoke` | Single Lua script removes session record(s) and `ZREM` from index; instructs Router to drop `router:jwt_cache:{sid}` |
+| `cpt-insightspec-fr-bff-session-revoke` | Single Lua script removes session record(s), `ZREM` from index, and `DEL router:jwt_cache:{sid}` in one round-trip |
 | `cpt-insightspec-fr-bff-gateway-jwt` | Claim contract owned here; minting performed by Router |
 | `cpt-insightspec-fr-bff-logout` | `/auth/logout` for local + RP-initiated; `/auth/oidc/back-channel-logout` for IdP-initiated |
 | `cpt-insightspec-fr-bff-csrf` | Double-submit token bound to session ID + `Origin` allowlist |
@@ -368,7 +368,7 @@ JWKS and `/api/*` reverse proxy live in the [Router](../router/DESIGN.md), not h
 |---|---|---|
 | Identity Service | REST (SDK client) | Resolve IdP `sub` → internal `user_id` and `tenant_id` |
 | Audit Service | Redpanda producer | Publish auth events |
-| Router (sibling) | In-process function calls (cache invalidation) | Notify Router to drop `router:jwt_cache:{sid}` on revoke |
+| Router (sibling) | Shared Redis (direct DEL of `router:jwt_cache:*`) | Invalidate cached gateway JWTs on session revoke. No RPC, no Redpanda -- both modules share the same Redis client. |
 
 ### 3.5 External Dependencies
 
