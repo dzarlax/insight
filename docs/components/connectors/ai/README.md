@@ -4,6 +4,11 @@ What each connector exposes natively. Snapshot date: 2026-04-28 (verified agains
 
 **Legend:** ✅ available · 🟡 partial / indirect · ❌ not available
 
+## Changelog
+
+- **2026-04-28** — initial document. Verified against public docs for Cursor, Claude Admin, Claude Enterprise (where Anthropic publishes; remainder against local bronze schema), OpenAI, GitHub Copilot, Windsurf. Added Anthropic source-resolution rules (Admin vs Enterprise vs multi-org).
+- **2026-04-28** — added **JetBrains AI** as 7th provider, against the public IDE Services analytics API (`/api/analytics/ai/*`). Only concepts confirmed in published docs are marked ✅; per-tool taxonomy (`junie`, `aia`, `claude_code`, `code_completion`, `nes`) is built into the API. Internal spec `connectors/ai/jetbrains/jetbrains.md` has known divergences from the real API (wrong endpoint name, wrong subscription-gating claim, several speculative fields like `most_used_model` / `models_used` / `ide_product_code` / `chat_sessions`) — see notes in the JetBrains AI section.
+
 Connectors:
 - **Cursor** (`bronze_cursor.*`) — IDE dev tool
 - **Claude Admin** (`bronze_claude_admin.*`) — Anthropic API admin endpoints (`/v1/organizations/usage_report/messages`, `/v1/organizations/usage_report/claude_code`, `/v1/organizations/cost_report`, plus `/v1/organizations/{users,api_keys,workspaces,invites}`)
@@ -11,50 +16,52 @@ Connectors:
 - **OpenAI** (`bronze_openai.*`) — `platform.openai.com` Admin Usage API. ChatGPT Team app activity vs. raw API used to be inseparable in this stream alone (per [help article 8957039](https://help.openai.com/en/articles/8957039)); as of late 2025 the **Compliance Logs Platform** ships dedicated Codex Usage logs alongside Admin Audit and User Authentication logs, so separation is now possible — but our connector does not yet ingest that endpoint.
 - **GitHub Copilot** (`bronze_github_copilot.*`) — pending (PR #234 — PRD/DESIGN drafted, connector code not yet written). Targets the new signed-URL NDJSON metrics API (`/orgs/{org}/copilot/metrics/reports/{users-1-day,organization-1-day}`, plus 28-day variants with `/latest`). Old `/copilot/metrics` was decommissioned 2026-04-02. Signed-URL host changed once on 2026-02-26 and another change is upcoming per the 2026-04-22 changelog — implementations must not hardcode the host.
 - **Windsurf** (`bronze_windsurf.*`) — *planned only*. API verified per [docs.windsurf.com](https://docs.windsurf.com/plugins/accounts/api-reference/api-introduction): 6 endpoints on `https://server.codeium.com/api/v1/` — 3 analytics (`/Analytics`, `/CascadeAnalytics`, `/UserPageAnalytics`) plus 3 config/billing (`/UsageConfig`, `/GetUsageConfig`, `/GetTeamCreditBalance`). Service-key auth (in request body), **Enterprise plan only**.
+- **JetBrains AI** (`bronze_jetbrains_ai.*`) — *planned only*. API verified per JetBrains [IDE Services AI Analytics docs](https://www.jetbrains.com/help/ide-services/ai-analytics-api.html). Endpoints under IDE Services / Central Console: `GET /api/analytics/ai/users-adoption`, `/effectiveness/metrics`, `/effectiveness/metrics-by-feature`, `/effectiveness/metrics/totals`, `/effectiveness/metrics/users.paged`; user directory at `GET /api/v1/users`. Auth: `Authorization: Automation <token>` or OAuth 2.0. Granularity: per `(user, tool, date)` daily aggregates; tool taxonomy `tool ∈ {junie, aia, claude_code, code_completion, nes}` is built into the API. Authoritative response field names live in the **tenant-served Swagger** (`https://<your_org>/swagger-ui.html`) — public help pages name the metric concepts but not the JSON keys. Available to any AI Pro / Ultimate / All Products Pack customer running IDE Services or Central Console (no separate "AI Enterprise" SKU required, contrary to internal spec).
 
 ---
 
 ## Identity & metadata
 
-| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot * | Windsurf ** |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| User directory (email-keyed) | ✅ `cursor_members` | ✅ `claude_admin_users` | ✅ `claude_enterprise_users` | ✅ `users` | ✅ `copilot_seats` (login + email) | ✅ implicit via `daily_usage.email` |
-| API key inventory | ❌ | ✅ `claude_admin_api_keys` | ❌ | ❌ | ❌ | ❌ |
-| Workspace structure (flat list) | ❌ | ✅ `claude_admin_workspaces` + `*_members` (no documented hierarchy — workspaces are flat under one org) | ❌ | ❌ | ❌ | ❌ |
-| User invites | ❌ | ✅ `claude_admin_invites` | ❌ | ❌ | ❌ | ❌ |
-| Seat assignment (plan/billing tier) | ❌ | ❌ | ❌ | ❌ | ✅ `copilot_seats.plan_type` | 🟡 implicit via `subscription_included_reqs` vs `usage_based_reqs` |
-| Audit logs | ✅ `cursor_audit_logs` | ❌ (Compliance API not integrated) | ❌ | ❌ (Compliance Logs API not integrated) | ❌ | ❌ |
+| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot * | Windsurf ** | JetBrains AI *** |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| User directory (email-keyed) | ✅ `cursor_members` | ✅ `claude_admin_users` | ✅ `claude_enterprise_users` | ✅ `users` | ✅ `copilot_seats` (login + email) | ✅ implicit via `daily_usage.email` | ✅ `/api/v1/users` (`id`, `email`, `username`, `role`, `isActive`, `createdDate`) |
+| API key inventory | ❌ | ✅ `claude_admin_api_keys` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Workspace structure (flat list) | ❌ | ✅ `claude_admin_workspaces` + `*_members` (no documented hierarchy — workspaces are flat under one org) | ❌ | ❌ | ❌ | ❌ | 🟡 IDE Services profiles (`profileId` filter) — not a workspace tree |
+| User invites | ❌ | ✅ `claude_admin_invites` | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Seat assignment (plan/billing tier) | ❌ | ❌ | ❌ | ❌ | ✅ `copilot_seats.plan_type` | 🟡 implicit via `subscription_included_reqs` vs `usage_based_reqs` | ❌ (no per-user plan tier in public API) |
+| Audit logs | ✅ `cursor_audit_logs` | ❌ (Compliance API not integrated) | ❌ | ❌ (Compliance Logs API not integrated) | ❌ | ❌ | ❌ |
 
 \* GitHub Copilot — *pending PR #234, OPEN*. All cells indicate what **will be available** after implementation.
 \*\* Windsurf — *planned only*. No connector code yet; schema below derived from public API docs.
+\*\*\* JetBrains AI — *planned only*. API endpoints public ([IDE Services AI Analytics](https://www.jetbrains.com/help/ide-services/ai-analytics-api.html)) but exact JSON field names require tenant-served Swagger to confirm. Cells reflect documented metric concepts, not verbatim wire-format names.
 
 ## Code / IDE / CLI dev activity
 
-| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| AI-accepted lines added | ✅ `acceptedLinesAdded` | ✅ `lines_added` | ✅ `code_lines_added` | 🟡 ** | ✅ `loc_added_sum` | ✅ Analytics:User Data `num_lines_accepted` + Cascade `linesAccepted` |
-| AI-accepted lines removed | ✅ `acceptedLinesDeleted` | ✅ `lines_removed` | ✅ `code_lines_removed` | ❌ | ❌ | 🟡 Command Data `lines_removed` (per command, not aggregated) |
-| Total lines / bytes (incl. manual keystrokes) | ✅ `totalLinesAdded` / `totalLinesDeleted` | ❌ | ❌ | ❌ | ❌ | ✅ **PCW data `total_bytes` / `user_bytes`** (unique honest signal) |
-| `ai_loc_share` (accepted/total) computable | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ **PCW `percent_code_written` directly** (codeium_bytes/total_bytes) |
-| Sessions per day | 🟡 `isActive` boolean only (no session counter) | ✅ `session_count` | ✅ `code_session_count` | 🟡 ** | 🟡 (via `last_activity_at` heuristic) | 🟡 derive from per-day rows + `lastAutocompleteUsageTime` etc. |
-| Suggestions/completions accepted | ✅ `totalTabsAccepted` | ✅ `tool_use_accepted` | ✅ `code_tool_accepted_count` | ❌ | ✅ `code_acceptance_activity_count` | ✅ Analytics:User Data `num_acceptances` |
-| Suggestions/completions offered | ✅ `totalTabsShown` | ❌ | ❌ | ❌ | ❌ | ❌ (no «shown» counter in API) |
-| Tool invocations rejected | ❌ | ✅ `tool_use_rejected` | ✅ `code_tool_rejected_count` | ❌ | ❌ | ❌ (only accepted) |
-| Tool acceptance rate | ✅ | ✅ | ✅ | ❌ | ❌ (no offered counter) | ❌ (no shown counter) |
-| Agent / multi-step sessions | ✅ `agentRequests` | ❌ | ❌ | ❌ | ✅ `used_agent` (boolean) | ✅ Cascade Runs (filter `mode != 'CONVERSATIONAL_PLANNER_MODE_NO_TOOL'`) |
-| Agent tool actions breakdown | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **Cascade Tool Usage**: `tool ∈ {CODE_ACTION, VIEW_FILE, RUN_COMMAND, ...}` with counts |
-| Cascade conversations (chat) | — | ❌ | ❌ | ❌ | ❌ | ✅ Cascade Runs `cascadeId` + `messagesSent` |
-| Chat-specific metrics (intent breakdown) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ Analytics:Chat `latest_intent_type` (8 types) |
-| Chat completion impact (`loc_used`) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ Analytics:Chat `chat_loc_used`, `chat_applied`, `chat_inserted_at_cursor` |
-| Chat usage flag | ❌ | ❌ | ❌ | ❌ | ✅ `used_chat` (boolean) | ✅ via Chat Data presence or `lastChatUsageTime` |
-| CLI usage flag | ❌ | ❌ | ❌ | ❌ | ✅ `used_cli` (boolean) | 🟡 `ide_types` filter includes 'cli' |
-| Editor breakdown (vscode/jetbrains/cli) | ✅ `tabMostUsedExtension` | ❌ | ❌ | ❌ | ✅ `last_activity_editor` | ✅ Analytics filter `ide_types ∈ {editor, jetbrains, cli}` + dimension |
-| Most used model (per day) | ✅ `mostUsedModel` | ❌ | ❌ | implicit `model` per row | ❌ | ✅ Cascade Runs `model` (per-cascadeId, requires aggregation) |
-| Commits attributed to AI | ❌ | ✅ `core_metrics.commits_by_claude_code` (Claude Code Analytics) | ✅ `code_commit_count` | ❌ | ❌ | ❌ |
-| PRs attributed to AI | ❌ | ✅ `core_metrics.pull_requests_by_claude_code` (Claude Code Analytics) | ✅ `code_pull_request_count` | ❌ | ❌ | ❌ |
-| Subscription tier / billing | ✅ `subscriptionIncludedReqs` / `usageBasedReqs` | ❌ | ❌ | ✅ `service_tier` | ✅ via `plan_type` | ✅ UserPageAnalytics `promptCreditsUsed` (cents); Cascade Runs `promptsUsed` per-run |
-| Active-days / last-activity per modality | ❌ | ❌ | ❌ | ❌ | ✅ `last_activity_at` (one) | ✅ UserPageAnalytics: 3 separate timestamps `lastAutocompleteUsageTime`, `lastChatUsageTime`, `lastCommandUsageTime` |
-| Per-tool sub-categorization (edit/write/multi-edit) | ❌ | ✅ per terminal_type | ✅ `claude_code_metrics_json` (edit/multi_edit/notebook) | ❌ | ❌ | ✅ Command Data `command_source` (8 sources), Cascade `mode` |
+| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf | JetBrains AI |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| AI-accepted lines added | ✅ `acceptedLinesAdded` | ✅ `lines_added` | ✅ `code_lines_added` | 🟡 ** | ✅ `loc_added_sum` | ✅ Analytics:User Data `num_lines_accepted` + Cascade `linesAccepted` | ✅ "lines added" (concept; per-user/tool/day from `/effectiveness/metrics`) |
+| AI-accepted lines removed | ✅ `acceptedLinesDeleted` | ✅ `lines_removed` | ✅ `code_lines_removed` | ❌ | ❌ | 🟡 Command Data `lines_removed` (per command, not aggregated) | ✅ "lines deleted" (concept) — also "lines modified" |
+| Total lines / bytes (incl. manual keystrokes) | ✅ `totalLinesAdded` / `totalLinesDeleted` | ❌ | ❌ | ❌ | ❌ | ✅ **PCW data `total_bytes` / `user_bytes`** (unique honest signal) | ❌ |
+| `ai_loc_share` (accepted/total) computable | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ **PCW `percent_code_written` directly** (codeium_bytes/total_bytes) | ❌ (no manual-keystroke denominator) |
+| Sessions per day | 🟡 `isActive` boolean only (no session counter) | ✅ `session_count` | ✅ `code_session_count` | 🟡 ** | 🟡 (via `last_activity_at` heuristic) | 🟡 derive from per-day rows + `lastAutocompleteUsageTime` etc. | 🟡 "invocations" (concept; not a session count) |
+| Suggestions/completions accepted | ✅ `totalTabsAccepted` | ✅ `tool_use_accepted` | ✅ `code_tool_accepted_count` | ❌ | ✅ `code_acceptance_activity_count` | ✅ Analytics:User Data `num_acceptances` | ✅ "suggestions accepted" (concept) |
+| Suggestions/completions offered | ✅ `totalTabsShown` | ❌ | ❌ | ❌ | ❌ | ❌ (no «shown» counter in API) | ✅ "suggestions shown" (concept) — unique among non-Cursor providers |
+| Tool invocations rejected | ❌ | ✅ `tool_use_rejected` | ✅ `code_tool_rejected_count` | ❌ | ❌ | ❌ (only accepted) | ✅ "suggestions rejected" / "lines rejected" (concept) |
+| Tool acceptance rate | ✅ | ✅ | ✅ | ❌ | ❌ (no offered counter) | ❌ (no shown counter) | ✅ "AI code acceptance rate" (documented dashboard metric) |
+| Agent / multi-step sessions | ✅ `agentRequests` | ❌ | ❌ | ❌ | ✅ `used_agent` (boolean) | ✅ Cascade Runs (filter `mode != 'CONVERSATIONAL_PLANNER_MODE_NO_TOOL'`) | 🟡 via `tool='junie'` filter (Junie = JB's agent product) |
+| Agent tool actions breakdown | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **Cascade Tool Usage**: `tool ∈ {CODE_ACTION, VIEW_FILE, RUN_COMMAND, ...}` with counts | ❌ |
+| Cascade conversations (chat) | — | ❌ | ❌ | ❌ | ❌ | ✅ Cascade Runs `cascadeId` + `messagesSent` | ❌ |
+| Chat-specific metrics (intent breakdown) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ Analytics:Chat `latest_intent_type` (8 types) | ❌ |
+| Chat completion impact (`loc_used`) | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ Analytics:Chat `chat_loc_used`, `chat_applied`, `chat_inserted_at_cursor` | ❌ |
+| Chat usage flag | ❌ | ❌ | ❌ | ❌ | ✅ `used_chat` (boolean) | ✅ via Chat Data presence or `lastChatUsageTime` | ✅ via `tool='aia'` filter (AI Assistant chat — `chat_messages` concept) |
+| CLI usage flag | ❌ | ❌ | ❌ | ❌ | ✅ `used_cli` (boolean) | 🟡 `ide_types` filter includes 'cli' | ❌ (no CLI in JB AI scope — IDE-only) |
+| Editor breakdown (vscode/jetbrains/cli) | ✅ `tabMostUsedExtension` | ❌ | ❌ | ❌ | ✅ `last_activity_editor` | ✅ Analytics filter `ide_types ∈ {editor, jetbrains, cli}` + dimension | ❌ in public API (internal spec speculates `ide_product_code` but not documented) |
+| Most used model (per day) | ✅ `mostUsedModel` | ❌ | ❌ | implicit `model` per row | ❌ | ✅ Cascade Runs `model` (per-cascadeId, requires aggregation) | ❌ in public API (no per-user model attribution; only `tool` taxonomy) |
+| Commits attributed to AI | ❌ | ✅ `core_metrics.commits_by_claude_code` (Claude Code Analytics) | ✅ `code_commit_count` | ❌ | ❌ | ❌ | ❌ |
+| PRs attributed to AI | ❌ | ✅ `core_metrics.pull_requests_by_claude_code` (Claude Code Analytics) | ✅ `code_pull_request_count` | ❌ | ❌ | ❌ | ❌ |
+| Subscription tier / billing | ✅ `subscriptionIncludedReqs` / `usageBasedReqs` | ❌ | ❌ | ✅ `service_tier` | ✅ via `plan_type` | ✅ UserPageAnalytics `promptCreditsUsed` (cents); Cascade Runs `promptsUsed` per-run | ❌ |
+| Active-days / last-activity per modality | ❌ | ❌ | ❌ | ❌ | ✅ `last_activity_at` (one) | ✅ UserPageAnalytics: 3 separate timestamps `lastAutocompleteUsageTime`, `lastChatUsageTime`, `lastCommandUsageTime` | 🟡 `users-adoption` "active users" rollup (period-level, not per-modality) |
+| Per-tool sub-categorization (edit/write/multi-edit) | ✅ `tabMostUsedExtension` ≠ this | ✅ per terminal_type | ✅ `claude_code_metrics_json` (edit/multi_edit/notebook) | ❌ | ❌ | ✅ Command Data `command_source` (8 sources), Cascade `mode` | ✅ **`tool` enum is built-in API axis**: `{junie, aia, claude_code, code_completion, nes}` — every metric row is per-tool |
 
 \*\* OpenAI: indirect via `model LIKE '%codex%'` heuristic on `usage_completions` (models `gpt-5-codex`, `gpt-5.3-codex`). Not exact — not every Codex request necessarily uses a codex-specific model.
 
@@ -70,17 +77,17 @@ This feeds the **planned** `class_ai_org_usage` (see below).
 
 ## Chat / Assistant activity (Claude.ai web/desktop, ChatGPT app — consumer-facing chat products)
 
-| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Chat messages | ❌ | ❌ | ✅ `chat_message_count` | 🟡 ** | ❌ | ❌ * |
-| Chat conversations | ❌ | ❌ | ✅ `chat_conversation_count` | ❌ | ❌ | ❌ * |
-| Files uploaded in chat | ❌ | ❌ | ✅ `chat_files_uploaded_count` | ❌ | ❌ | ❌ |
-| Skills used | ❌ | ❌ | ✅ `chat_skills_used_count` | ❌ | ❌ | ❌ |
-| Connectors used | ❌ | ❌ | ✅ `chat_connectors_used_count` | ❌ | ❌ | ❌ |
-| Projects created / used | ❌ | ❌ | ✅ `chat_projects_created_count` / `..._used_count` | ❌ | ❌ | ❌ |
-| Artifacts created | ❌ | ❌ | ✅ `chat_artifacts_created_count` | ❌ | ❌ | ❌ |
-| "Thinking" turns (extended reasoning) | ❌ | ❌ | ✅ `chat_thinking_message_count` | ❌ | ❌ | ❌ |
-| Skills / connectors / projects directories | ❌ | ❌ | ✅ `claude_enterprise_skills` / `..._connectors` / `..._chat_projects` | ❌ | ❌ | ❌ |
+| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf | JetBrains AI |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Chat messages | ❌ | ❌ | ✅ `chat_message_count` | 🟡 ** | ❌ | ❌ * | ❌ † (in-IDE chat covered above) |
+| Chat conversations | ❌ | ❌ | ✅ `chat_conversation_count` | ❌ | ❌ | ❌ * | ❌ † |
+| Files uploaded in chat | ❌ | ❌ | ✅ `chat_files_uploaded_count` | ❌ | ❌ | ❌ | ❌ |
+| Skills used | ❌ | ❌ | ✅ `chat_skills_used_count` | ❌ | ❌ | ❌ | ❌ |
+| Connectors used | ❌ | ❌ | ✅ `chat_connectors_used_count` | ❌ | ❌ | ❌ | ❌ |
+| Projects created / used | ❌ | ❌ | ✅ `chat_projects_created_count` / `..._used_count` | ❌ | ❌ | ❌ | ❌ |
+| Artifacts created | ❌ | ❌ | ✅ `chat_artifacts_created_count` | ❌ | ❌ | ❌ | ❌ |
+| "Thinking" turns (extended reasoning) | ❌ | ❌ | ✅ `chat_thinking_message_count` | ❌ | ❌ | ❌ | ❌ |
+| Skills / connectors / projects directories | ❌ | ❌ | ✅ `claude_enterprise_skills` / `..._connectors` / `..._chat_projects` | ❌ | ❌ | ❌ | ❌ |
 
 \*\* OpenAI: ChatGPT Team app activity is mixed with raw API calls in `usage_completions`. Separation is now possible via the **Compliance Logs Platform** (dedicated Codex Usage logs alongside Admin Audit and User Authentication logs, GA late 2025) but our connector does not yet ingest it.
 
@@ -88,46 +95,46 @@ This feeds the **planned** `class_ai_org_usage` (see below).
 
 ## Office / desktop integrations
 
-| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Excel sessions | ❌ | ❌ | ✅ `excel_session_count` | ❌ | ❌ | ❌ |
-| Excel messages | ❌ | ❌ | ✅ `excel_message_count` | ❌ | ❌ | ❌ |
-| PowerPoint sessions | ❌ | ❌ | ✅ `powerpoint_session_count` | ❌ | ❌ | ❌ |
-| PowerPoint messages | ❌ | ❌ | ✅ `powerpoint_message_count` | ❌ | ❌ | ❌ |
-| Cowork (desktop assistant) sessions | ❌ | ❌ | ✅ `cowork_session_count` | ❌ | ❌ | ❌ |
-| Cowork messages / actions | ❌ | ❌ | ✅ `cowork_message_count` / `cowork_action_count` | ❌ | ❌ | ❌ |
-| Cowork dispatch turns | ❌ | ❌ | ✅ `cowork_dispatch_turn_count` | ❌ | ❌ | ❌ |
-| Web search (cross-surface chat+code) | ❌ | ❌ | ✅ `web_search_count` | ❌ | ❌ | ❌ |
+| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf | JetBrains AI |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Excel sessions | ❌ | ❌ | ✅ `excel_session_count` | ❌ | ❌ | ❌ | ❌ |
+| Excel messages | ❌ | ❌ | ✅ `excel_message_count` | ❌ | ❌ | ❌ | ❌ |
+| PowerPoint sessions | ❌ | ❌ | ✅ `powerpoint_session_count` | ❌ | ❌ | ❌ | ❌ |
+| PowerPoint messages | ❌ | ❌ | ✅ `powerpoint_message_count` | ❌ | ❌ | ❌ | ❌ |
+| Cowork (desktop assistant) sessions | ❌ | ❌ | ✅ `cowork_session_count` | ❌ | ❌ | ❌ | ❌ |
+| Cowork messages / actions | ❌ | ❌ | ✅ `cowork_message_count` / `cowork_action_count` | ❌ | ❌ | ❌ | ❌ |
+| Cowork dispatch turns | ❌ | ❌ | ✅ `cowork_dispatch_turn_count` | ❌ | ❌ | ❌ | ❌ |
+| Web search (cross-surface chat+code) | ❌ | ❌ | ✅ `web_search_count` | ❌ | ❌ | ❌ | ❌ |
 
 > This domain is **only** covered by Claude Enterprise. Cursor / Copilot / Windsurf are IDE-only — no Office integration. OpenAI / Claude Admin are API-tier, not consumer products.
 
 ## API tokens / billing
 
-| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Input tokens | 🟡 `cursor_usage_events.tokenUsage` (per-event JSON) | ✅ `claude_admin_messages_usage` | ❌ | ✅ `usage_completions.input_tokens` | ❌ | ❌ |
-| Output tokens | 🟡 same | ✅ | ❌ | ✅ `output_tokens` | ❌ | ❌ |
-| Cached input tokens | 🟡 `tokenUsage.cacheReadTokens` / `cacheWriteTokens` (per-event JSON) | ✅ `cache_read_input_tokens` + `cache_creation.ephemeral_{5m,1h}_input_tokens` | ❌ | ✅ `input_cached_tokens` | ❌ | ❌ |
-| Audio tokens | ❌ | ❌ | ❌ | ✅ `input_audio_tokens` / `output_audio_tokens` | ❌ | ❌ |
-| Per-model breakdown | 🟡 `mostUsedModel` (daily) + per-event `model` | ✅ | ❌ | ✅ `model` | ❌ | ✅ Cascade Runs `model` |
-| Per-project breakdown | ❌ | ❌ | ❌ | ✅ `project_id` | ❌ | 🟡 `group_name` (team groups) |
-| Per-API-key breakdown | ❌ | ✅ (via `actor_type='api_actor'`) | ❌ | ❌ | ❌ | ❌ (service_keys are admin-level only) |
-| Service tier (default/scale) | ✅ `subscriptionIncludedReqs` / `usageBasedReqs` | ❌ | ❌ | ✅ `service_tier` | ✅ via `plan_type` | ❌ (has `promptCreditsUsed` per cycle) |
-| Batch flag | ❌ | ❌ | ❌ | ✅ `batch` | ❌ | ❌ |
-| Cost ($, per line item) | ✅ `cursor_usage_events.chargedCents` (per-event) | ✅ `claude_admin_cost_report` | ❌ | ✅ `costs` | ❌ | ✅ Cascade Runs `promptsUsed` (cents); UserPageAnalytics `promptCreditsUsed` per user |
-| Credit / usage-based billing flag | ✅ `isChargeable`, `isFreeBugbot`, `isTokenBasedCall` | ❌ | ❌ | ✅ `is_batch` | ❌ | 🟡 implicit (prompts billed in credits) |
+| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf | JetBrains AI |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Input tokens | 🟡 `cursor_usage_events.tokenUsage` (per-event JSON) | ✅ `claude_admin_messages_usage` | ❌ | ✅ `usage_completions.input_tokens` | ❌ | ❌ | ❌ (no token-level data in public API) |
+| Output tokens | 🟡 same | ✅ | ❌ | ✅ `output_tokens` | ❌ | ❌ | ❌ |
+| Cached input tokens | 🟡 `tokenUsage.cacheReadTokens` / `cacheWriteTokens` (per-event JSON) | ✅ `cache_read_input_tokens` + `cache_creation.ephemeral_{5m,1h}_input_tokens` | ❌ | ✅ `input_cached_tokens` | ❌ | ❌ | ❌ |
+| Audio tokens | ❌ | ❌ | ❌ | ✅ `input_audio_tokens` / `output_audio_tokens` | ❌ | ❌ | ❌ |
+| Per-model breakdown | 🟡 `mostUsedModel` (daily) + per-event `model` | ✅ | ❌ | ✅ `model` | ❌ | ✅ Cascade Runs `model` | ❌ (per-tool axis only, not per-model) |
+| Per-project breakdown | ❌ | ❌ | ❌ | ✅ `project_id` | ❌ | 🟡 `group_name` (team groups) | 🟡 `profileId` filter (IDE Services profile) |
+| Per-API-key breakdown | ❌ | ✅ (via `actor_type='api_actor'`) | ❌ | ❌ | ❌ | ❌ (service_keys are admin-level only) | ❌ |
+| Service tier (default/scale) | ✅ `subscriptionIncludedReqs` / `usageBasedReqs` | ❌ | ❌ | ✅ `service_tier` | ✅ via `plan_type` | ❌ (has `promptCreditsUsed` per cycle) | ❌ |
+| Batch flag | ❌ | ❌ | ❌ | ✅ `batch` | ❌ | ❌ | ❌ |
+| Cost ($, per line item) | ✅ `cursor_usage_events.chargedCents` (per-event) | ✅ `claude_admin_cost_report` | ❌ | ✅ `costs` | ❌ | ✅ Cascade Runs `promptsUsed` (cents); UserPageAnalytics `promptCreditsUsed` per user | ❌ (AI Credit consumption shown in dashboards only — not in public API) |
+| Credit / usage-based billing flag | ✅ `isChargeable`, `isFreeBugbot`, `isTokenBasedCall` | ❌ | ❌ | ✅ `is_batch` | ❌ | 🟡 implicit (prompts billed in credits) | ❌ |
 
 ## Specialized API surfaces (model API only)
 
-| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Embeddings API usage | ❌ | ❌ | ❌ | ✅ `usage_embeddings` | ❌ | ❌ |
-| Moderations API usage | ❌ | ❌ | ❌ | ✅ `usage_moderations` | ❌ | ❌ |
-| Image generation (DALL-E) | ❌ | ❌ | ❌ | ✅ `usage_images` | ❌ | ❌ |
-| Audio TTS (`speeches`) | ❌ | ❌ | ❌ | ✅ `usage_audio_speeches` | ❌ | ❌ |
-| Audio Speech-to-Text (Whisper) | ❌ | ❌ | ❌ | ✅ `usage_audio_transcriptions` | ❌ | ❌ |
-| Vector store usage | ❌ | ❌ | ❌ | ✅ `usage_vector_stores` | ❌ | ❌ |
-| Code Interpreter (Assistants tool) | ❌ | ❌ | ❌ | ✅ `usage_code_interpreter` | ❌ | ❌ |
+| Metric | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot | Windsurf | JetBrains AI |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| Embeddings API usage | ❌ | ❌ | ❌ | ✅ `usage_embeddings` | ❌ | ❌ | ❌ |
+| Moderations API usage | ❌ | ❌ | ❌ | ✅ `usage_moderations` | ❌ | ❌ | ❌ |
+| Image generation (DALL-E) | ❌ | ❌ | ❌ | ✅ `usage_images` | ❌ | ❌ | ❌ |
+| Audio TTS (`speeches`) | ❌ | ❌ | ❌ | ✅ `usage_audio_speeches` | ❌ | ❌ | ❌ |
+| Audio Speech-to-Text (Whisper) | ❌ | ❌ | ❌ | ✅ `usage_audio_transcriptions` | ❌ | ❌ | ❌ |
+| Vector store usage | ❌ | ❌ | ❌ | ✅ `usage_vector_stores` | ❌ | ❌ | ❌ |
+| Code Interpreter (Assistants tool) | ❌ | ❌ | ❌ | ✅ `usage_code_interpreter` | ❌ | ❌ | ❌ |
 
 > This domain is **OpenAI-only**. Anthropic does not expose separate modality streams (everything goes through the unified Messages API in `claude_admin_messages_usage`). Cursor / Copilot / Windsurf are IDE/dev tools, single-modality (text completions/chat in IDE), so no specialized surface streams exist.
 
@@ -391,66 +398,74 @@ This delivers real data for all existing FE metrics + correct attribution.
 
 ---
 
-## Anthropic source resolution (Admin vs Enterprise vs multi-org)
+## Cross-vendor source resolution
 
-Anthropic data can arrive from multiple sources for the same person/day, and the matrix's `(tenant, email, day, tool)` grain is **not sufficient** to keep them apart. This section pins down the resolution rules.
+Multiple sources can describe the same person × day × tool from different vantage points. The same `tool='claude_code'` row may arrive from Claude Admin (token-level, all clients), Claude Enterprise (user-level, no api_actor), and JetBrains AI (only when used through a JetBrains IDE plugin). Same applies to OpenAI/Codex potentially leaking through JetBrains as `tool='code_completion'` / `tool='aia'`.
 
-### Configurations to support
+Rather than baking merge priorities into silver, **silver stores per-source rows verbatim; gold provides standardized views with documented column-level rules**.
 
-The general shape: an Insight tenant has **N Anthropic organizations** (any combination of Team and Enterprise tiers, N ≥ 1). Each org independently has:
-- Always: an Admin API surface (`/usage_report/{messages,claude_code}`, `/cost_report`, `/users`, `/api_keys`, `/workspaces`, `/invites`).
-- Optionally (if on Enterprise plan): an Enterprise analytics surface (`bronze_claude_enterprise.*`).
-
-That gives **per-org** up to 2 sources, and **per-tenant** up to 2N sources for the same `(email, day)`. Concrete shapes we expect to see:
-
-1. **Single Admin org** (Team or Enterprise tier without enterprise-analytics enabled) — baseline; one source, no merge needed.
-2. **Single org, Admin + Enterprise** — partial overlap on code_* (same metrics, slightly different actor scope) + complementary surfaces (Admin only: tokens/cost/api_actor activity; Enterprise only: chat/cowork/office/web_search).
-3. **Multiple orgs, mixed tiers** — e.g. one Enterprise org + one Team org, or several Team orgs (different departments / acquired companies / regional accounts), or several Team + several Enterprise. Same person may appear in any subset with the same email. `api_keys`, `workspaces`, `cost_report` are per-org and must NOT be summed across orgs implicitly. Worst case: a person with the same email in 3 orgs (2 Team, 1 Enterprise) yields up to 4 source-rows for one day (2 Admin-Team + 1 Admin-Enterprise + 1 Enterprise-analytics).
-
-### Required schema change: add `provider_org_id`
-
-`class_ai_dev_usage` (and any other Anthropic-fed silver class) must carry a **`provider_org_id`** dimension (the Anthropic organization UUID). New grain:
+### Silver grain
 
 ```
 (insight_tenant_id, email, day, tool, provider_org_id, source)
 ```
 
-Why mandatory:
-- Multi-org configurations (#3) need it for cost integrity — per-org billing must not be silently aggregated, regardless of how many orgs the tenant has.
-- Cheaper to add now than to backfill once a customer registers a second Anthropic org.
-- `source ∈ {claude_admin, claude_enterprise}` is already in schema and stays — it discriminates connector **within** an org; `provider_org_id` discriminates **between** orgs.
-- Generalizes naturally to N orgs — adding the 7th Anthropic org doesn't require schema change, just another connector instance writing rows with its own `provider_org_id`.
+- `source ∈ {cursor, claude_admin, claude_enterprise, openai, github_copilot, windsurf, jetbrains_ai}` — names which connector wrote the row.
+- `provider_org_id` — vendor-side organization UUID (Anthropic org id, GitHub org login, JetBrains tenant id, etc.). Distinguishes the same vendor's multiple org accounts under one Insight tenant.
+- One silver row per source: each row carries **only** the metrics that source actually reports; everything else is NULL. No COALESCE between sources, no cross-source priority. Adding a new source = adding new rows, not revising existing ones.
+- Three `tool='claude_code'` rows for the same person/day (Admin + Enterprise + JetBrains) are not duplicates — they are three independent observations.
 
-Gold-layer roll-ups for "total usage by person" do `SUM(...) GROUP BY email, day` over `provider_org_id` and `source` explicitly — the choice to aggregate is opt-in, not implicit.
+### Configurations
 
-### Within one org: field-level merge rules (Configuration 2)
+The grain handles all configurations the same way:
 
-One row per `(tenant, email, day, tool='claude_code', provider_org_id)` in silver, populated from both Admin and Enterprise via field-specific rules:
+1. **Single source** (e.g. only Cursor) — one silver row per person/day; trivial.
+2. **One vendor, two sources, one org** (e.g. Claude Admin + Enterprise on the same Anthropic org) — two silver rows; same `(email, day, tool)`, different `source`.
+3. **One vendor, multiple orgs** (e.g. several Anthropic Team orgs + an Enterprise org under one Insight tenant) — one row per `(source, provider_org_id)`. Different orgs = different rows, never collapse.
+4. **Cross-vendor overlap on same `tool`** (e.g. `tool='claude_code'` from Claude Admin AND from JetBrains because the user runs Claude through the JB plugin) — different `source` values, different rows. Treated identically to (2) at silver.
 
-| Field | Source | Rule |
+Worst-case: a person with the same email in 3 Anthropic orgs + JetBrains tenant who actually uses Claude Code through JB → up to 5 silver rows for one day (3 Admin + 1 Enterprise + 1 JB). All correct.
+
+### Gold view contracts
+
+Three standard gold views consume silver. Each is **explicitly documented** in its SQL header — naive `SUM(...)` against silver is a bug.
+
+#### 1. `v_ai_usage_per_provider`
+
+Pass-through silver, no aggregation. One row per `(email, day, tool, provider_org_id, source)`. Use for "how much does each connector report" dashboards and DQ comparison. Filter by `source` for product-specific views.
+
+#### 2. `v_ai_usage_unified`
+
+One row per `(email, day, tool, provider_org_id)` — collapses across `source` with column-level rules. Each column has a documented priority list and merge mode:
+
+| Column | Priority list (first non-null wins, unless noted) | Notes |
 |---|---|---|
-| `session_count`, `lines_added`, `lines_removed`, `tool_use_accepted`, `tool_use_rejected` | Admin Code Analytics ∪ Enterprise users.code_* | `COALESCE(admin, enterprise)` — Admin preferred (wider actor scope, includes api_actor) |
-| `commits_count`, `pull_requests_count` | Admin `core_metrics.{commits,pull_requests}_by_claude_code` ∪ Enterprise `code_{commit,pull_request}_count` | COALESCE(admin, enterprise) |
-| `tool_action_breakdown_json` | Admin `tool_actions.*` (raw 4-tool dict) ∪ Enterprise `claude_code_metrics_json` | Admin preferred — raw structure beats JSON blob |
-| `chat_*`, `cowork_*`, `excel_*`, `powerpoint_*`, `web_search_count` | Enterprise only | direct |
-| `input_tokens`, `output_tokens`, `cache_*`, `cost_cents` | Admin Messages Usage / Cost Report only | direct (Enterprise doesn't expose) |
-| `data_source` (debug tag) | computed | one of `claude_admin`, `claude_enterprise`, `both` — for traceability |
+| `lines_added`, `lines_removed`, `total_lines_added`, `total_lines_removed` | Cursor → JetBrains AI → Claude Admin → Claude Enterprise → Windsurf → Copilot | IDE/CLI tools see editor state; API-tier sources don't see lines |
+| `suggestions_offered`, `suggestions_accepted`, `suggestions_rejected` | Cursor → JetBrains AI → Copilot → Windsurf → Claude Admin → Claude Enterprise | IDE-side counts; only IDE-tier sources observe «shown» |
+| `session_count`, `commits_count`, `pull_requests_count`, `tool_action_breakdown_json` | Claude Admin → Claude Enterprise → JetBrains AI → Cursor | Anthropic Code Analytics has the widest actor scope; JB sees only JB-driven sessions |
+| `input_tokens`, `output_tokens`, `cache_*` | Claude Admin → OpenAI → Cursor (per-event JSON) | API-tier metering only. JetBrains, Copilot, Windsurf don't expose tokens |
+| `cost_cents` | Claude Admin (`cost_report`) → OpenAI (`costs`) → Cursor (`chargedCents`) → Windsurf (`promptCreditsUsed`) | Per-line-item billing; never derive from token counts |
+| `chat_*`, `cowork_*`, `excel_*`, `powerpoint_*`, `web_search_count` | Claude Enterprise (only) | No fallback — sole source |
+| `ide_breakdown` (product/version) | JetBrains AI → Cursor (`tabMostUsedExtension`) → Copilot (`last_activity_editor`) | Editor-context dimension |
+| `data_source` (audit tag) | computed | comma-joined list of contributing `source` values, e.g. `claude_admin,jetbrains_ai` |
 
-**api_actor rows** (CI bots, API-key activity from Admin Code Analytics with `actor_type='api_actor'`) are written **separately** with `email=NULL`, `api_key_id=...`. They never participate in Admin↔Enterprise dedup since Enterprise doesn't see them.
+Priority lists must be reflected verbatim as a SQL comment at the top of the view — drift between this doc and the view definition is a bug.
 
-### Across orgs: never dedup, always per-org
+#### 3. `v_ai_users_dau`
 
-Multi-org tenants are handled entirely by `provider_org_id` being part of the grain — no additional rules, regardless of N. Multiple rows for the same `(email, day)` with different `provider_org_id` are correct, not duplicates. Cost roll-ups stay per-org. Usage roll-ups by person are an explicit `SUM(...) GROUP BY email, day` in gold — opt-in, never implicit.
+`COUNT(DISTINCT email) GROUP BY day, tool` (or `tool, source` for per-product DAU). Never sum metrics here — DAU is a person-distinct count, not an activity sum. Avoids accidental double-count from the multi-source rows below it.
 
-A subtle case: when the same person legitimately uses Claude in two orgs the same day (e.g. consultant working with two clients), summing `lines_added` across orgs is the right answer for "how much AI did Alex use today". When the rows look identical (same email, same day, same metrics in two orgs), it's almost always **two separate sessions in two orgs** — not a duplicate. Cross-org dedup heuristics are dangerous; don't add them.
+### Data-quality checks
 
-### Data-quality alert
+For columns where multiple sources report the same concept (e.g. `lines_added` from Cursor and JB AI for the same user/day, or `session_count` from Admin and Enterprise on the same Anthropic org):
+- If both sources non-NULL and diverge by >5%, fire a DQ alert. Priority is a default for the unified view, not a cover-up for connector bugs.
+- The `v_ai_usage_per_provider` view exposes the raw per-source values for debugging.
 
-When Admin and Enterprise both deliver `lines_added` for the same `(email, day, provider_org_id)` and the values diverge by >5%, fire a DQ alert rather than silently COALESCE. Source priority is a default, not a cover-up for connector bugs.
+### Cross-vendor caveat: vantage-point overlap
 
-### Open question
+JetBrains AI's `tool='claude_code'` row and Claude Admin's `tool='claude_code'` row often describe the **same actual coding session** seen from two angles: JB sees IDE-level events (suggestions, lines), Anthropic sees API calls (tokens, cost). At silver they are independent rows; at gold (`v_ai_usage_unified`) they merge by COALESCE on **complementary** columns — JB fills `lines_*`/`suggestions_*`, Anthropic fills `tokens`/`cost`/`session_count`/`commits`. Neither overrides the other on its native fields.
 
-`tool='claude_code'` after merge is a single value. If the lead prefers explicit traceability over a single canonical row, the alternative is `tool ∈ {'claude_code:admin', 'claude_code:enterprise'}` as parallel rows in silver, with merge happening only in the gold view. This trades schema cleanliness for debuggability. **Pending lead's input** — see Open question #5 below.
+The same applies to JB's `code_completion`/`aia`/`junie` tools when configured with bring-your-own LLM keys: those calls also light up Claude Admin or OpenAI usage. Currently silver does not attempt to attribute JB rows back to the underlying LLM provider (JB's API doesn't expose it), so the rows live independently as `tool='aia'` (from JB) and `tool='messages'`/`tool='codex'` (from Anthropic/OpenAI). For person/org rollups this is acceptable; for token-cost-per-IDE attribution it is not solvable without JB exposing the upstream model.
 
 ---
 
@@ -464,7 +479,7 @@ When Admin and Enterprise both deliver `lines_added` for the same `(email, day, 
 
 4. **OpenAI multi-modal surfaces in one `class_ai_api_usage`** or separate (e.g., `class_ai_image_usage`, `class_ai_audio_usage`)? — **Single class with `surface` ENUM**. Each modality has different core counts (tokens / seconds / image count) — schema will have conditional NULL columns per-surface. Note that `vector_stores` carries only `usage_bytes` and `code_interpreter_sessions` only `num_sessions` — both single-metric, so most surface-specific columns are NULL for them. Alternative — per-modality classes — gives clean schemas but N classes for N modalities. I'd go with union + surface enum for practicality.
 
-5. **`tool='claude_code'` for Admin vs Enterprise rows is identical** — after dedup on `(tenant, email, day, tool)` they will **collapse**. Both sources now carry the same `commits_count` / `pull_requests_count` / per-tool breakdown (Admin via Claude Code Analytics API, Enterprise via `claude_code_metrics_json`), so the overlap is wider than originally framed: it's not "Enterprise has more, Admin is a subset" — it's two views of the same underlying metric set with different actor resolution (Admin includes API-actor activity, Enterprise is user-only). Need either priority resolution or explicit separate tool values (`claude_code:admin`, `claude_code:enterprise`). **Decision pending lead's input.**
+5. ~~**`tool='claude_code'` for Admin vs Enterprise rows**~~ — *resolved by silver-per-source design*: silver keeps Admin and Enterprise as separate rows discriminated by `source`, no merge at silver. Gold view `v_ai_usage_unified` collapses them via documented column-level priority (see Cross-vendor source resolution). No `claude_code:admin` / `claude_code:enterprise` tool-value split needed — `source` already discriminates.
 
 6. **Cost in `class_ai_dev_usage` or `class_ai_cost`?** — Cursor/Admin staging have a `cost_cents` column in the current dev_usage schema. That's per-user cost (when billing is per-seat / per-token). Could **duplicate** for gold-query convenience (avoid join), but creates a perpetual sync risk on truth changes. **Cleaner: drop `cost_cents` from dev_usage**, keep only in the cost class. Minor migration.
 
@@ -1017,6 +1032,67 @@ PR #234 explicitly declares a **new silver class `class_ai_org_usage`** (deferre
 
 Per-IDE / per-language / per-feature breakdowns also exist in the new schema (`code_generation_activity_count`, `loc_added_sum`, `loc_changed_sum`, agent fields, etc.) — extend as needed.
 
+## JetBrains AI (planned, no connector)
+
+**Reference:** [JetBrains IDE Services AI Analytics API](https://www.jetbrains.com/help/ide-services/ai-analytics-api.html). Endpoints under `/api/analytics/ai/*`. Authoritative response field names live in tenant-served Swagger (`https://<your_org>/swagger-ui.html`); public help pages name metric concepts only. Bronze field names below use snake_case as a placeholder — confirm against tenant Swagger before connector implementation.
+
+⚠️ **Internal spec divergence:** the existing spec at `connectors/ai/jetbrains/jetbrains.md` calls this "JetBrains AI Enterprise admin API" and gates the connector behind a "JetBrains AI Enterprise" subscription. Both are wrong per JetBrains' public docs — the API is the IDE Services / Central Console analytics surface, available to any AI Pro / Ultimate / All Products Pack customer running IDE Services. Several spec fields (`most_used_model`, `models_used`, `chat_sessions`, `ide_product_code`, `ide_version`, `plugin_version`, `last_seen_at`, `active_days_in_period`) are not documented publicly — likely speculative. Treat the spec as draft until validated against a real tenant Swagger.
+
+### `/api/analytics/ai/effectiveness/metrics/users.paged` → `class_ai_dev_usage` (proposed bronze: `bronze_jetbrains_ai.activity`)
+
+Per-user-per-day-per-tool aggregates. Tool taxonomy is built into the API: `tool ∈ {junie, aia, claude_code, code_completion, nes}` — every row is per-tool. Pagination via `cursor` + `limit` (1–1000). Filter by user UUID list via `query`.
+
+| Bronze field (TBD via Swagger) | Silver target | Notes |
+|---|---|---|
+| `tenant_id`, `source_id`, `unique_key` | identity | base |
+| `user_uuid` (JB internal id) | join key — resolves via `/api/v1/users` to email | identity |
+| `email` (resolved) | `email` | identity |
+| `date` | `day` | dimension |
+| `tool` ∈ {`junie`,`aia`,`claude_code`,`code_completion`,`nes`} | `tool` (verbatim) | `source='jetbrains_ai'` discriminates from Anthropic's `tool='claude_code'`; gold `v_ai_usage_unified` merges across `source` per documented rules |
+| suggestions shown (concept) | `tool_use_offered` | unique non-Cursor signal |
+| suggestions accepted (concept) | `tool_use_accepted` | |
+| suggestions rejected (concept) | NEW column `tool_use_rejected` | |
+| lines added (concept) | `lines_added` | |
+| lines deleted (concept) | `lines_removed` | |
+| lines modified (concept) | NEW column `lines_modified` | JB-unique granularity |
+| invocations (concept) | NEW column `invocations` (≠ session_count) | |
+| AI code acceptance rate (concept) | derive `tool_use_accepted / tool_use_offered` in silver | `v_ai_usage_unified` reuses |
+| (computed) `source='jetbrains_ai'`, `data_source='insight_jetbrains_ai'`, `provider_org_id=<JB tenant id>` | fixed | discriminator |
+| (computed) `total_lines_added` / `total_lines_removed` | NULL | semantic gap (no manual-keystroke denominator) |
+| (computed) `input_tokens` / `output_tokens` / `cost_cents` | NULL | not exposed |
+
+### `/api/analytics/ai/users-adoption` → org rollup (`class_ai_org_usage` planned)
+
+Period-grouped (`groupBy ∈ DAY/WEEK/MONTH/YEAR`) "active users" / "users with AI access" counts. Feeds the same `class_ai_org_usage` class as Copilot's `organization-1-day` rollup — different vendor, same concept.
+
+| Bronze field | Silver target | Notes |
+|---|---|---|
+| `period_start`, `period_end` | grain | matches `groupBy` |
+| `active_users` | `total_active_users` | concept-level |
+| `users_with_access` | `total_seats` (proxy) | seat inventory analog |
+| (computed) `tool='jb:any'`, `surface='aggregate'` | fixed | |
+
+### `/api/analytics/ai/effectiveness/metrics-by-feature` → optional drill-down
+
+Same metrics as the per-user endpoint but pivoted by tool/feature. Useful for org dashboards "what's the most-used JB AI feature" without per-user noise. Not strictly needed if the per-user staging is in place — gold views can pivot.
+
+### `/api/v1/users` → `class_people`
+
+| API field | Silver target | Notes |
+|---|---|---|
+| `id` (user UUID) | `class_people.jetbrains_user_uuid` (NEW) | join key for per-user analytics rows |
+| `email` | `class_people.email` | identity unification |
+| `username` | metadata | optional |
+| `role` (`member`/`admin`) | `class_people.role` | |
+| `isActive` (boolean) | filter (active=true) | |
+| `createdDate`, `createdBy` | metadata | |
+
+### Out-of-scope (per public docs as of 2026-04-28)
+
+- Per-token / per-cost data — not exposed publicly. AI Credit consumption is dashboard-only per the [Feb 2026 JetBrains blog](https://blog.jetbrains.com/ai/2026/02/enhanced-ai-management-and-analytics-for-organizations/).
+- Per-event invocation log — only daily aggregates published.
+- Per-IDE / per-model breakdown — public docs do not name these as exposed via API. Internal spec speculates `ide_product_code` / `most_used_model` — validate against tenant Swagger before assuming present.
+
 ---
 
 ## Extended `class_ai_dev_usage` schema (for maximum data)
@@ -1058,6 +1134,11 @@ model_used                  -- e.g. 'gpt-5-codex' vs 'gpt-5.3-codex'
 used_chat_today, used_agent_today, used_cli_today  -- boolean activity flags
 user_initiated_interactions                        -- user_initiated_interaction_count
 last_activity_editor                               -- vscode/jetbrains/etc. (also from Cursor as variant)
+
+-- JetBrains AI-specific (NEW):
+lines_modified              -- JB exposes added/modified/deleted (3-way), unlike others' 2-way
+invocations                 -- ≠ session_count; JB's per-tool call count
+                            -- (tool axis: junie/aia/claude_code/code_completion/nes — already in `tool` column)
 ```
 
 NULL-policy: per-source enforce that columns without semantic meaning = NULL (not 0). E.g. `total_lines_added` for Claude/Copilot rows = NULL, `commits_count` for Cursor/Copilot/OpenAI rows = NULL, `tool_use_offered` for Claude/Copilot rows = NULL.
@@ -1127,22 +1208,23 @@ source, data_source, collected_at
 
 ## Extended coverage matrix of proposed silver classes
 
-| Silver class | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot * | Windsurf ** |
-|---|---|---|---|---|---|---|
-| `class_ai_dev_usage` | ✅ daily_usage (rich) | ✅ code_usage | ✅ users.code_* (incl. commits/PRs) | 🟡 completions WHERE model ILIKE '%codex%' | ✅ user_metrics + seats join | ✅ /Analytics User+Command+PCW + /CascadeAnalytics |
-| `class_ai_assistant_usage` | ❌ | ❌ | ✅ users.chat_*+cowork_*+office_*+web_search | 🟡 needs Compliance API | ❌ | 🟡 /Analytics Chat (intent-typed chat metrics) |
-| `class_ai_api_usage` (extended) | 🟡 usage_events (NEW staging) | ✅ messages_usage | ❌ | ✅ all 8 surfaces (vector_stores / code_interpreter only have `usage_bytes` / `num_sessions` resp. — no `num_files` / `num_calls`) | ❌ (Copilot doesn't expose token-level) | 🟡 /CascadeAnalytics Runs (`promptsUsed` in cents — billing-level, not tokens) |
-| `class_ai_cost` | ❌ | ✅ cost_report (NEW silver class) | ❌ | ✅ costs | 🟡 only seat-level (via plan_type pricing — derived) | ✅ /UserPageAnalytics `promptCreditsUsed` per user, /Cascade per-run |
-| `class_ai_audit_log` | ✅ audit_logs | 🟡 invites + Compliance future | ❌ | 🟡 Compliance future | ❌ | ❌ |
-| `class_ai_org_usage` ⭐ NEW | ❌ | ❌ | 🟡 summaries (assigned/active counts) | ❌ | ✅ org_metrics (DAU/engagement) | 🟡 derived from /UserPageAnalytics roster + activity |
-| `class_ai_seats` (opt.) NEW | ✅ members | ❌ | 🟡 users (assigned implicitly) | ❌ | ✅ seats (rich plan info) | ✅ UserPageAnalytics (rich: 3 modality timestamps + role + status) |
-| `class_ai_directories` (opt.) | ❌ | ❌ | ✅ skills + connectors + chat_projects | ❌ | ❌ | 🟡 Cascade Tool Usage (CODE_ACTION, VIEW_FILE, etc.) — limited |
-| `class_ai_workspaces` (opt.) | ❌ | ✅ workspaces + members | ❌ | 🟡 projects? (separate from workspaces) | ❌ (different org concept) | ✅ groups (`group_name` filter in API) |
-| `class_ai_api_keys` (opt.) | ❌ | ✅ api_keys | ❌ | ❌ | ❌ (PAT-based, no per-key inventory) | 🟡 service_keys (admin-level only, not per-user) |
-| `class_people` (existing) | ✅ members | ✅ users | ✅ users | ✅ users | ✅ seats (login + email) | ✅ UserPageAnalytics |
+| Silver class | Cursor | Claude Admin | Claude Enterprise | OpenAI | GitHub Copilot * | Windsurf ** | JetBrains AI *** |
+|---|---|---|---|---|---|---|---|
+| `class_ai_dev_usage` | ✅ daily_usage (rich) | ✅ code_usage | ✅ users.code_* (incl. commits/PRs) | 🟡 completions WHERE model ILIKE '%codex%' | ✅ user_metrics + seats join | ✅ /Analytics User+Command+PCW + /CascadeAnalytics | ✅ `/effectiveness/metrics/users.paged` (per-user × tool × day) |
+| `class_ai_assistant_usage` | ❌ | ❌ | ✅ users.chat_*+cowork_*+office_*+web_search | 🟡 needs Compliance API | ❌ | 🟡 /Analytics Chat (intent-typed chat metrics) | ❌ (no consumer chat product; in-IDE chat covered by `class_ai_dev_usage` via `tool='aia'`) |
+| `class_ai_api_usage` (extended) | 🟡 usage_events (NEW staging) | ✅ messages_usage | ❌ | ✅ all 8 surfaces (vector_stores / code_interpreter only have `usage_bytes` / `num_sessions` resp. — no `num_files` / `num_calls`) | ❌ (Copilot doesn't expose token-level) | 🟡 /CascadeAnalytics Runs (`promptsUsed` in cents — billing-level, not tokens) | ❌ (no token-level data) |
+| `class_ai_cost` | ❌ | ✅ cost_report (NEW silver class) | ❌ | ✅ costs | 🟡 only seat-level (via plan_type pricing — derived) | ✅ /UserPageAnalytics `promptCreditsUsed` per user, /Cascade per-run | ❌ (AI Credit consumption dashboard-only) |
+| `class_ai_audit_log` | ✅ audit_logs | 🟡 invites + Compliance future | ❌ | 🟡 Compliance future | ❌ | ❌ | ❌ |
+| `class_ai_org_usage` ⭐ NEW | ❌ | ❌ | 🟡 summaries (assigned/active counts) | ❌ | ✅ org_metrics (DAU/engagement) | 🟡 derived from /UserPageAnalytics roster + activity | ✅ `/users-adoption` (period-grouped active/access counts) |
+| `class_ai_seats` (opt.) NEW | ✅ members | ❌ | 🟡 users (assigned implicitly) | ❌ | ✅ seats (rich plan info) | ✅ UserPageAnalytics (rich: 3 modality timestamps + role + status) | 🟡 `/api/v1/users` (role/isActive — no per-user plan tier) |
+| `class_ai_directories` (opt.) | ❌ | ❌ | ✅ skills + connectors + chat_projects | ❌ | ❌ | 🟡 Cascade Tool Usage (CODE_ACTION, VIEW_FILE, etc.) — limited | ❌ |
+| `class_ai_workspaces` (opt.) | ❌ | ✅ workspaces + members | ❌ | 🟡 projects? (separate from workspaces) | ❌ (different org concept) | ✅ groups (`group_name` filter in API) | 🟡 IDE Services profiles (`profileId` filter) |
+| `class_ai_api_keys` (opt.) | ❌ | ✅ api_keys | ❌ | ❌ | ❌ (PAT-based, no per-key inventory) | 🟡 service_keys (admin-level only, not per-user) | ❌ |
+| `class_people` (existing) | ✅ members | ✅ users | ✅ users | ✅ users | ✅ seats (login + email) | ✅ UserPageAnalytics | ✅ `/api/v1/users` (id, email, username, role, isActive) |
 
 \* GitHub Copilot — *pending PR #234*. Implementation expected after PRD/DESIGN review.
 \*\* Windsurf — *planned only*, real API verified per [docs.windsurf.com](https://docs.windsurf.com/plugins/accounts/api-reference/api-introduction). No connector PR open.
+\*\*\* JetBrains AI — *planned only*. Public API surface confirmed; bronze schema TBD via tenant-served Swagger.
 
 ## Implementation effort (rough)
 
