@@ -386,8 +386,8 @@ If Redis is unreachable, signing keys are missing, or the route table is empty, 
 **Main Flow**:
 1. Browser sends `GET /api/analytics/...` with cookie.
 2. Router matches the path prefix to an upstream.
-3. Router validates the cookie against `session:{id}` in Redis.
-4. Router reads `jwt_cache:{sid}`. On miss, mints a new JWT and caches it.
+3. Router validates the cookie against `bff:session:{id}` in Redis (read-only).
+4. Router reads `router:jwt_cache:{sid}`. On miss, mints a new JWT and caches it.
 5. Router rewrites headers and forwards to the upstream.
 6. Router streams the response back.
 
