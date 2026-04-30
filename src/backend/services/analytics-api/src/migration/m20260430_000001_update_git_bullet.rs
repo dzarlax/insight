@@ -1,11 +1,11 @@
-//! Replace the IC Bullet Git `query_ref` to surface the expanded git_output set.
+//! Replace the IC Bullet Git `query_ref` to surface the expanded `git_output` set.
 //!
 //! Pairs with ingestion migration `20260430000000_git-bullet-expand.sql`, which
 //! widens `insight.git_bullet_rows` from a single key (`commits`) to the
 //! counters and per-event distributions needed by the IC dashboard.
 //!
 //! New query pivots the daily/per-event rows per (person, period) into the
-//! 9 metric_keys the FE expects: 6 surfaced from the view directly
+//! 9 `metric_keys` the FE expects: 6 surfaced from the view directly
 //! (`commits`, `prs_created`, `prs_merged`, `clean_loc`, `pr_size`,
 //! `pr_cycle_time_h`) and 3 derived ratios computed from counter sums
 //! per person (`merge_rate`, `lines_per_commit`, `commits_per_active_day`).
