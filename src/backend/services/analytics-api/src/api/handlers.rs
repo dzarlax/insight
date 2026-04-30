@@ -293,14 +293,28 @@ pub async fn query_metric(
     // selected period. Outer person_id/org_unit_id filters still apply post-aggregate.
     let (effective_from, date_pushed) = if let Some(ref filter) = req.filter {
         let date_from = extract_odata_value(filter, "metric_date", "ge");
-        let date_to = extract_odata_value(filter, "metric_date", "lt");
+        // Accept both `lt` (exclusive) and `le` (inclusive) — the FE's
+        // `odataDateFilter` emits `le`, OData spec also allows `lt`. Without
+        // both, the upper bound is silently dropped and the period extends
+        // to "today" — which is exactly the bug we're fixing here.
+        let (date_to, date_to_op) = match extract_odata_value(filter, "metric_date", "lt") {
+            Some(v) => (Some(v), "<"),
+            None => match extract_odata_value(filter, "metric_date", "le") {
+                Some(v) => (Some(v), "<="),
+                None => (None, "<"),
+            },
+        };
         if (date_from.is_some() || date_to.is_some()) && from_clause.trim_start().starts_with('(') {
             let mut clauses: Vec<String> = vec![];
             if let Some(ref v) = date_from {
                 clauses.push(format!("metric_date >= '{}'", v.replace('\'', "''")));
             }
             if let Some(ref v) = date_to {
-                clauses.push(format!("metric_date < '{}'", v.replace('\'', "''")));
+                clauses.push(format!(
+                    "metric_date {} '{}'",
+                    date_to_op,
+                    v.replace('\'', "''"),
+                ));
             }
             let where_inner = format!(" WHERE {}", clauses.join(" AND "));
             (
@@ -327,6 +341,9 @@ pub async fn query_metric(
             }
             if let Some(date_to) = extract_odata_value(filter, "metric_date", "lt") {
                 sql.push_str(" AND metric_date < ?");
+                params.push(date_to);
+            } else if let Some(date_to) = extract_odata_value(filter, "metric_date", "le") {
+                sql.push_str(" AND metric_date <= ?");
                 params.push(date_to);
             }
         }
