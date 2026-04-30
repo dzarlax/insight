@@ -122,6 +122,30 @@ ingestion:
   templates:
     enabled: true
 
+  # ─── Bronze freshness monitoring ───────────────────────────────────────
+  # Single CronWorkflow runs `dbt source freshness` against every bronze
+  # source declared in `src/ingestion/dbt/...`. SLA defaults (loaded_at_field,
+  # warn/error windows) live in `src/ingestion/dbt/dbt_project.yml`; per-table
+  # opt-outs live in connector schema.yml files.
+  freshness:
+    enabled: true
+    # Cron expression for the freshness check. Daily at 13:00 UTC sits past
+    # all current connector sync slots (02:00–11:00 UTC) plus a 2h grace.
+    schedule: "0 13 * * *"
+    # dbt selector for the freshness check. `source:*` covers every declared
+    # source (incl. `staging_jira` — those have no `freshness:` block so dbt
+    # skips them). Narrow this for smoke-testing in dev.
+    dbtSelect: "source:*"
+    # Image must contain dbt-clickhouse + the project's `dbt/` tree. Same
+    # toolbox image as `dbt-run`. Pin a tag in production overrides.
+    toolboxImage: "ghcr.io/cyberfabric/insight-toolbox:latest"
+    # Webhook URL for delivering breach notifications. Empty string = no
+    # fan-out (failures still surface via the Argo workflow status). The
+    # contract is generic JSON POST — Zulip / Mattermost / a custom relay
+    # all work. See `src/ingestion/MONITORING.md`.
+    # TODO: pick a delivery channel and set this in tenant overrides.
+    notificationWebhookUrl: ""
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  INFRASTRUCTURE
 # ═══════════════════════════════════════════════════════════════════════════

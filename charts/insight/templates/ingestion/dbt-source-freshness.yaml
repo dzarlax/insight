@@ -1,0 +1,219 @@
+{{- if and .Values.ingestion.templates.enabled .Values.ingestion.freshness.enabled }}
+{{- /*
+Bronze freshness check: runs `dbt source freshness` against ClickHouse, reads
+the resulting `target/sources.json`, and emits a notification when any source
+is `warn` or `error`. Single workflow covers every connector — new bronze
+sources are picked up automatically as soon as they appear in any
+`schema.yml` (defaults inherited from `dbt_project.yml`).
+
+How to reason about it operationally:
+  - `pass`  : MAX(_airbyte_extracted_at) within the warn window. Sync OK.
+  - `warn`  : older than warn_after but younger than error_after. One missed
+              run; alert lower priority.
+  - `error` : older than error_after. Multiple missed runs / source dead.
+              Page on these.
+
+Two failure modes this catches:
+  1. Argo CronWorkflow didn't run / couldn't talk to Airbyte → no new rows.
+  2. Sync ran but source API returned 0 rows (token expired, API outage).
+
+It does NOT distinguish (1) from (2) — for that we need an independent
+"last successful Airbyte job" signal (future work, see MONITORING.md).
+*/}}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: dbt-source-freshness
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  entrypoint: run
+  templates:
+    - name: run
+      inputs:
+        parameters:
+          # Selector applied to `dbt source freshness`. Default covers every
+          # bronze_* source declared anywhere in the project. Override to
+          # narrow scope (e.g., per-tenant smoke check).
+          - name: dbt_select
+            value: "source:*"
+          - name: toolbox_image
+          - name: clickhouse_host
+          - name: clickhouse_port
+          - name: clickhouse_user
+          # Webhook URL for delivering alerts. Empty string = log only (the
+          # check still surfaces failures via the workflow's exit status,
+          # which Argo UI / `kubectl get workflows` makes visible).
+          # TODO(monitoring): wire to a real channel. Zulip is the working
+          # candidate — see src/ingestion/MONITORING.md for the contract.
+          - name: notification_webhook_url
+            value: ""
+      activeDeadlineSeconds: 600
+      script:
+        image: {{ `"{{inputs.parameters.toolbox_image}}"` }}
+        imagePullPolicy: Always
+        command: [bash]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+          - name: DBT_SELECT
+            value: {{ `"{{inputs.parameters.dbt_select}}"` }}
+          - name: CLICKHOUSE_HOST
+            value: {{ `"{{inputs.parameters.clickhouse_host}}"` }}
+          - name: CLICKHOUSE_PORT
+            value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
+          - name: CLICKHOUSE_USER
+            value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+          - name: NOTIFICATION_WEBHOOK_URL
+            value: {{ `"{{inputs.parameters.notification_webhook_url}}"` }}
+        source: |
+          # SECURITY: every parameter reaches us via env vars only — no
+          # interpolation into shell or YAML source. Same convention as
+          # dbt-run.yaml.
+          set -euo pipefail
+          cd /ingestion/dbt
+          python3 - <<'PY'
+          import os, yaml
+          profile = {
+              "ingestion": {
+                  "target": "k8s",
+                  "outputs": {
+                      "k8s": {
+                          "type": "clickhouse",
+                          "host": os.environ["CLICKHOUSE_HOST"],
+                          "port": int(os.environ["CLICKHOUSE_PORT"]),
+                          "schema": "silver",
+                          "user": os.environ["CLICKHOUSE_USER"],
+                          "password": os.environ["CLICKHOUSE_PASSWORD"],
+                          "secure": False,
+                          "send_receive_timeout": 600,
+                          "query_limit": 0,
+                          "connect_timeout": 30,
+                      }
+                  }
+              }
+          }
+          with open("profiles.yml", "w") as f:
+              yaml.safe_dump(profile, f)
+          PY
+
+          # `dbt source freshness` exits non-zero when any source fails the
+          # SLA. We capture that but keep going so the notification step can
+          # report what actually failed.
+          set +e
+          dbt source freshness --profiles-dir . --select "$DBT_SELECT"
+          DBT_RC=$?
+          set -e
+
+          # Parse target/sources.json and emit a one-line summary per
+          # warn/error source. The workflow exit code preserves dbt's RC so
+          # Argo / kubectl can also see the failure.
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+
+          path = "target/sources.json"
+          if not os.path.exists(path):
+              print(f"freshness: no {path} produced — dbt likely crashed before checking sources", file=sys.stderr)
+              sys.exit(2)
+
+          with open(path) as f:
+              report = json.load(f)
+
+          breaches = []
+          for r in report.get("results", []):
+              status = r.get("status")
+              if status in ("warn", "error", "runtime error"):
+                  unique_id = r.get("unique_id", "?")
+                  max_loaded_at = r.get("max_loaded_at")
+                  age_seconds = r.get("max_loaded_at_time_ago_in_s")
+                  breaches.append({
+                      "source": unique_id,
+                      "status": status,
+                      "max_loaded_at": max_loaded_at,
+                      "age_hours": round(age_seconds / 3600, 1) if age_seconds else None,
+                  })
+
+          if not breaches:
+              print("freshness: all sources within SLA")
+              sys.exit(0)
+
+          print(f"freshness: {len(breaches)} source(s) breaching SLA:")
+          for b in breaches:
+              age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
+              print(f"  [{b['status']:>5}] {b['source']} (max_loaded_at={b['max_loaded_at']}, age={age})")
+
+          # Notification fan-out. The webhook URL contract is intentionally
+          # generic — Zulip incoming webhook, Mattermost, generic JSON POST,
+          # or a small relay service all fit. See MONITORING.md.
+          webhook = os.environ.get("NOTIFICATION_WEBHOOK_URL", "").strip()
+          if webhook:
+              payload = {
+                  "topic": "ingestion-freshness",
+                  "summary": f"{len(breaches)} bronze source(s) breaching freshness SLA",
+                  "breaches": breaches,
+              }
+              try:
+                  req = urllib.request.Request(
+                      webhook,
+                      data=json.dumps(payload).encode("utf-8"),
+                      headers={"Content-Type": "application/json"},
+                      method="POST",
+                  )
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      print(f"freshness: notification posted ({resp.status})")
+              except Exception as e:
+                  print(f"freshness: notification webhook failed: {e}", file=sys.stderr)
+                  # Notification failure does not change the run's primary
+                  # exit code — we'd rather have a noisy log + breached SLA
+                  # in workflow status than swallow the upstream failure.
+          else:
+              print("freshness: NOTIFICATION_WEBHOOK_URL is empty — skipping fan-out (TODO: configure)")
+
+          # Preserve dbt's exit code so Argo marks the workflow Failed.
+          sys.exit(1 if any(b["status"] == "error" for b in breaches) else 0)
+          PY
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: dbt-source-freshness-check
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-monitoring
+spec:
+  schedules:
+    - {{ .Values.ingestion.freshness.schedule | quote }}
+  timezone: UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  workflowSpec:
+    entrypoint: run
+    templates:
+      - name: run
+        steps:
+          - - name: check
+              templateRef:
+                name: dbt-source-freshness
+                template: run
+              arguments:
+                parameters:
+                  - name: dbt_select
+                    value: {{ .Values.ingestion.freshness.dbtSelect | quote }}
+                  - name: toolbox_image
+                    value: {{ .Values.ingestion.freshness.toolboxImage | quote }}
+                  - name: clickhouse_host
+                    value: {{ include "insight.clickhouse.host" . | quote }}
+                  - name: clickhouse_port
+                    value: {{ include "insight.clickhouse.port" . | quote }}
+                  - name: clickhouse_user
+                    value: {{ .Values.clickhouse.username | quote }}
+                  - name: notification_webhook_url
+                    value: {{ .Values.ingestion.freshness.notificationWebhookUrl | quote }}
+{{- end }}

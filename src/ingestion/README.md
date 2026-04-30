@@ -169,6 +169,16 @@ export KUBECONFIG=~/.kube/insight.kubeconfig
 open http://localhost:30500
 ```
 
+## Monitoring
+
+Bronze freshness is checked daily by the `dbt-source-freshness-check`
+CronWorkflow. Defaults (30h warn / 48h error against `_airbyte_extracted_at`)
+live in `dbt/dbt_project.yml`; per-table opt-outs for slow-moving lookup
+streams sit next to the table in each connector's `schema.yml`. New
+connectors inherit the SLA automatically. Volume baselines, root-cause
+attribution (source vs bronze) and the choice of notification channel are
+tracked in [`MONITORING.md`](MONITORING.md).
+
 ## Services
 
 After `./dev-up.sh`:

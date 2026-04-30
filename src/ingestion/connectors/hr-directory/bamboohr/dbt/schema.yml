@@ -3,10 +3,16 @@ version: 2
 sources:
   - name: bamboohr
     schema: bronze_bamboohr
+    # Default freshness SLA inherited from `src/ingestion/dbt/dbt_project.yml`.
+    # `employees` is full-refresh — every sync rewrites the table so SLA holds.
+    # `leave_requests` and `meta_fields` are exempt below: legitimate days
+    # produce zero new rows (no one took leave / no admin field changes).
     tables:
       - name: employees
       - name: leave_requests
+        freshness: null
       - name: meta_fields
+        freshness: null
 
 models:
   - name: to_class_people

@@ -22,3 +22,28 @@ clean-targets:
 # by dbt via `union_by_tag` over this staging table.
 on-run-start:
   - "{{ create_task_field_history_staging() }}"
+
+# ---------------------------------------------------------------------------
+# Bronze freshness SLA (single source of truth).
+#
+# Every Airbyte-managed bronze source automatically inherits this policy:
+#   - `_airbyte_extracted_at` is set per-row by Airbyte's ClickHouse
+#     destination on every sync — MAX(extracted_at) tracks "did the last
+#     sync produce any rows?".
+#   - All connectors run on a daily cron (02:00–11:00 UTC). 30h warn / 48h
+#     error gives ~6h grace past the next expected run before paging.
+#
+# Connectors do NOT need to repeat these blocks in their own `schema.yml`.
+# Per-table opt-outs (`freshness: null`) belong in `schema.yml` next to the
+# table — those are domain decisions for slow-moving catalog/lookup streams.
+# Faster cadences (sub-daily) override at the source level in `schema.yml`.
+#
+# Run via: `dbt source freshness --profiles-dir . --select source:bronze_*`.
+# Triggered by the `dbt-source-freshness-check` CronWorkflow.
+# ---------------------------------------------------------------------------
+sources:
+  ingestion:
+    +loaded_at_field: _airbyte_extracted_at
+    +freshness:
+      warn_after: { count: 30, period: hour }
+      error_after: { count: 48, period: hour }
