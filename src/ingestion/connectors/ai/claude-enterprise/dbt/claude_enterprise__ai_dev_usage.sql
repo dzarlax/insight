@@ -33,6 +33,7 @@
 
 {{ config(
     materialized='incremental',
+    incremental_strategy='delete+insert',
     unique_key='unique_key',
     order_by=['unique_key'],
     on_schema_change='sync_all_columns',
@@ -81,7 +82,15 @@ SELECT
     'claude_enterprise'                                                AS source,
     'insight_claude_enterprise'                                        AS data_source,
     parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3)     AS collected_at
-FROM {{ source('bronze_claude_enterprise', 'claude_enterprise_users') }}
+FROM (
+    -- Bronze deduplication: bronze_claude_enterprise.claude_enterprise_users can
+    -- contain multiple Airbyte rows for the same logical (user_id, date) when
+    -- syncs re-emit the day. Keep only the latest by _airbyte_extracted_at.
+    SELECT *
+    FROM {{ source('bronze_claude_enterprise', 'claude_enterprise_users') }}
+    ORDER BY _airbyte_extracted_at DESC
+    LIMIT 1 BY tenant_id, source_id, user_id, date
+)
 WHERE user_email IS NOT NULL
   AND trim(user_email) != ''
   AND date IS NOT NULL

@@ -22,6 +22,7 @@
 -- (Admin is currently the sole contributor to this Silver class).
 {{ config(
     materialized='incremental',
+    incremental_strategy='delete+insert',
     unique_key='unique_key',
     order_by=['unique_key'],
     on_schema_change='sync_all_columns',

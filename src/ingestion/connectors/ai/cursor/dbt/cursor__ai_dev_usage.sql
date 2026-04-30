@@ -19,6 +19,7 @@
 -- tapped by a separate staging model if ever needed.
 {{ config(
     materialized='incremental',
+    incremental_strategy='delete+insert',
     unique_key='unique_key',
     order_by=['unique_key'],
     on_schema_change='sync_all_columns',

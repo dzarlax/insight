@@ -16,6 +16,7 @@
 
 {{ config(
     materialized='incremental',
+    incremental_strategy='delete+insert',
     unique_key='unique_key',
     order_by=['unique_key'],
     on_schema_change='sync_all_columns',
@@ -53,7 +54,13 @@ WITH base AS (
         cowork_skills_used_count,
         cowork_metrics_json,
         CAST(parseDateTime64BestEffortOrNull(coalesce(collected_at, ''), 3) AS Nullable(DateTime64(3))) AS collected_at
-    FROM {{ source('bronze_claude_enterprise', 'claude_enterprise_users') }}
+    FROM (
+        -- Bronze deduplication: see claude_enterprise__ai_dev_usage.sql for rationale.
+        SELECT *
+        FROM {{ source('bronze_claude_enterprise', 'claude_enterprise_users') }}
+        ORDER BY _airbyte_extracted_at DESC
+        LIMIT 1 BY tenant_id, source_id, user_id, date
+    )
     WHERE user_email IS NOT NULL
       AND trim(user_email) != ''
     {% if is_incremental() %}
