@@ -3,13 +3,21 @@ version: 2
 sources:
   - name: bronze_claude_enterprise
     schema: bronze_claude_enterprise
+    # Default freshness SLA inherited from `src/ingestion/dbt/dbt_project.yml`.
+    # This connector's sync runs daily at 11:00 UTC (after Anthropic's 10:00
+    # UTC aggregation window). `claude_enterprise_collection_runs` is the
+    # per-run heartbeat. Catalog streams (chat_projects, skills, connectors)
+    # are exempt — they change rarely.
     tables:
       - name: claude_enterprise_summaries
       - name: claude_enterprise_users
-      - name: claude_enterprise_chat_projects
-      - name: claude_enterprise_skills
-      - name: claude_enterprise_connectors
       - name: claude_enterprise_collection_runs
+      - name: claude_enterprise_chat_projects
+        freshness: null
+      - name: claude_enterprise_skills
+        freshness: null
+      - name: claude_enterprise_connectors
+        freshness: null
 
 models:
   - name: claude_enterprise__ai_api_usage
