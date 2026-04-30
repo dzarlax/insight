@@ -48,7 +48,8 @@
 
 ## Changelog
 
-- **v1.6** (current): Added a team-scoped threshold override FR (`cpt-dash-cfg-fr-team-threshold-scope`, `p2`) that lets team leads tweak their team's thresholds without touching other teams with the same role. Wired into the Metric Catalog PRD's extended scope model (`team + dashboard → team → dashboard → tenant → product-default`). Clarified that dashboard-scoped thresholds implicitly cover role because dashboards are keyed by `(view_type, role)`; no separate `role` scope was introduced on either side.
+- **v1.7** (current): Synced with Metric Catalog PRD v1.4+ scope model. The Metric Catalog rejected the `dashboard` scope outright (admins think in role / team / company terms, not dashboard terms; with `role` as a first-class scope, `dashboard` was redundant) and shipped `{ product-default, tenant, role, team, team+role }` as the v1 scope set with precedence `team+role → team → role → tenant → product-default`. Removed `cpt-dash-cfg-fr-dashboard-threshold-scope` (the dashboard scope no longer exists). Updated `cpt-dash-cfg-fr-team-threshold-scope` to reference the new precedence chain and to allow team-lead writes at both `scope = 'team'` and `scope = 'team+role'`. This PRD no longer contributes any threshold scope value of its own; it provides the `role_slug` values (via `role_catalog`) and `team_id` values (via Identity Resolution) that the catalog's scope chain consumes.
+- **v1.6**: Added a team-scoped threshold override FR (`cpt-dash-cfg-fr-team-threshold-scope`, `p2`) that lets team leads tweak their team's thresholds without touching other teams with the same role. Wired into the Metric Catalog PRD's extended scope model (`team + dashboard → team → dashboard → tenant → product-default`). Clarified that dashboard-scoped thresholds implicitly cover role because dashboards are keyed by `(view_type, role)`; no separate `role` scope was introduced on either side.
 - **v1.5**: Extracted the Metric Catalog concern into a separate PRD (`docs/domain/metric-catalog/specs/PRD.md`). This PRD now consumes the catalog through the contract documented there and no longer owns catalog storage, threshold persistence, or the `GET /catalog/metrics` endpoint. Made the document tenant-neutral by removing tenant-specific identifiers from the body. Cleaned residual inconsistencies (role-taxonomy table name reconciled to `role_alias`; outdated "normalization TBD" in Out-of-Scope reconciled with the actual `cpt-dash-cfg-fr-role-source` + `cpt-dash-cfg-fr-role-alias` design).
 - **v1.4**: Sharpened connector expectations — for tenants whose HR already exposes a job-role-equivalent field, the gap is a connector configuration step (adding the field alias to the HR connector's field list), not an HR-admin ask. Captured the current-state gap analysis against the backend: analytics-api lacks `dashboard` / `dashboard_widget` / `role_catalog` / `metric_catalog` tables; `Person` struct in both identity and analytics-api IR client carries only `job_title` and must add `job_role`; sequencing now references open PR #214 (MariaDB persons store) as the preferred landing point for the `job_role` column.
 - **v1.3**: Replaced `job_title` parsing with a dedicated HR `job_role` attribute as the role source. Identity Resolution now surfaces `job_role` as a first-class structured field — no more pattern-matching over free-form job titles. Tenant onboarding includes wiring the HR-system `job_role` field into Identity Resolution.
@@ -190,7 +191,7 @@ None beyond project defaults (React 18, Vite, TypeScript, `@hai3/react`, MariaDB
 - Frontend `<DashboardRenderer>` component resolving composition to rendered widgets via `(view_type, subject)` instead of a slug
 - Seed migration for default dashboards — one executive (role-invariant) plus a default team and default IC dashboard per seeded role in the default taxonomy
 - Migration path replacing `ExecutiveViewScreen`, `TeamViewScreen`, `IcDashboardScreen` with thin `<DashboardRenderer view_type="...">` wrappers
-- Dashboard-scoped threshold overrides (contributes the `scope = 'dashboard'` value into the catalog's `metric_threshold` store; does not own the store itself)
+- Team-scoped threshold overrides written by team leads (`scope = 'team'` or `scope = 'team+role'`) into the Metric Catalog's `metric_threshold` store, post-MVP; does not own the store itself
 - Moving computed KPI chips (`at_risk_count`, `focus_gte_60`, `not_using_ai`, `team_dev_time`) from frontend `deriveTeamKpis` into backend `metric_query` rows
 
 ### 4.2 Out of Scope
@@ -226,23 +227,13 @@ The system **MUST** hydrate widget-level metric metadata by calling `GET /catalo
 
 **Actors**: `cpt-dash-cfg-actor-viewer`, `cpt-dash-cfg-actor-analytics-api`
 
-#### Dashboard-Scoped Threshold Overrides
-
-- [ ] `p2` - **ID**: `cpt-dash-cfg-fr-dashboard-threshold-scope`
-
-The system **SHOULD** support dashboard-scoped threshold overrides by writing rows into the catalog's `metric_threshold` store with `scope = 'dashboard'` and a `dashboard_id` reference. Because dashboards in this PRD are keyed by `(view_type, role)`, dashboard-scoped thresholds implicitly cover role-specific overrides — no separate `role` scope is needed. Resolution precedence is owned by the Metric Catalog PRD (`cpt-metric-cat-fr-scoped-thresholds`) and is `team + dashboard → team → dashboard → tenant → product-default`. This PRD contributes the `dashboard` scope value; it does not reimplement the resolution logic.
-
-**Rationale**: Different dashboards aimed at different audiences within the same tenant may legitimately disagree on what "good" means; the catalog's scope model makes this expressible without forking metadata. Folding role into dashboard scope keeps the chain short.
-
-**Actors**: `cpt-dash-cfg-actor-tenant-admin`
-
 #### Team-Scoped Threshold Overrides (Team Lead)
 
 - [ ] `p2` - **ID**: `cpt-dash-cfg-fr-team-threshold-scope`
 
-Together with `cpt-dash-cfg-fr-team-lead-customization`, the system **SHOULD** allow a team lead to write team-scoped threshold overrides for their own team by calling the catalog's threshold admin endpoints with `scope = 'team'` and `team_id` set. Authorization restricts these writes to the team lead of the target team. Resolution precedence is owned by the Metric Catalog PRD and is `team + dashboard → team → dashboard → tenant → product-default`.
+Together with `cpt-dash-cfg-fr-team-lead-customization`, the system **SHOULD** allow a team lead to write team-scoped threshold overrides for their own team by calling the catalog's threshold admin endpoints with `scope = 'team'` and `team_id` set, or with `scope = 'team+role'` and both `team_id` and `role_slug` set when the override should only apply to a specific role within the team. Authorization restricts these writes to the team lead of the target team. Resolution precedence is owned by the Metric Catalog PRD (`cpt-metric-cat-fr-scoped-thresholds`) and is `team+role → team → role → tenant → product-default`. This PRD does not introduce a scope of its own — it supplies the `team_id` (via Identity Resolution) and `role_slug` (via `role_catalog`) values the catalog consumes.
 
-**Rationale**: A team lead should be able to nudge their team's bar without touching other teams with the same role. Without this, team-lead customization is purely cosmetic (widget composition only) and the one number that actually controls the red/yellow/green of each widget stays locked.
+**Rationale**: A team lead should be able to nudge their team's bar without touching other teams with the same role. Without this, team-lead customization is purely cosmetic (widget composition only) and the one number that actually controls the red/yellow/green of each widget stays locked. The catalog's `team+role` scope additionally lets a team lead override only for a specific role within their team (e.g., raising the bar for the team's PMs while leaving Backend Devs on the role default).
 
 **Actors**: `cpt-dash-cfg-actor-team-lead`
 
@@ -631,7 +622,7 @@ This PRD owns `GET /catalog/roles` and `GET /catalog/dashboards`. `GET /catalog/
 - [ ] The executive dashboard has `role = null` in every tenant; attempts to create an executive dashboard with a non-null role are rejected.
 - [ ] For the IC view, the dashboard is selected based on the subject's role resolved via Identity Resolution; fallback to the default `(view_type='ic', role=null)` dashboard works when the subject's role has no tailored dashboard.
 - [ ] The role source for every dashboard resolution is Identity Resolution; no direct HR-system query happens in the configurator path.
-- [ ] Dashboard-scoped threshold overrides (when written) are persisted into the Metric Catalog's `metric_threshold` store with `scope = 'dashboard'` and honored by the catalog's resolution precedence (`cpt-metric-cat-fr-scoped-thresholds`).
+- [ ] Team-scoped threshold overrides written by a team lead (per `cpt-dash-cfg-fr-team-threshold-scope`) are persisted into the Metric Catalog's `metric_threshold` store with `scope = 'team'` (or `scope = 'team+role'`) and honored by the catalog's resolution precedence `team+role → team → role → tenant → product-default` (`cpt-metric-cat-fr-scoped-thresholds`).
 - [ ] End users cannot add, remove, or reorder widgets on their own role-default IC dashboard; the API exposes no endpoint for per-user mutation of the role-default composition.
 - [ ] The IC view rendered for a person is byte-for-byte identical regardless of whether the viewer is the person themselves, their team lead, or a VP up the chain; divergence only happens post-MVP on a separate "My View" surface if one ships.
 
@@ -639,7 +630,7 @@ This PRD owns `GET /catalog/roles` and `GET /catalog/dashboards`. `GET /catalog/
 
 | Dependency | Description | Criticality |
 |------------|-------------|-------------|
-| Metric Catalog PRD (`docs/domain/metric-catalog/specs/PRD.md`) | Owns metric metadata, tenant-scoped thresholds, `GET /catalog/metrics`; this PRD consumes the catalog and writes only dashboard-scoped threshold overrides into the catalog's `metric_threshold` store | p1 |
+| Metric Catalog PRD (`docs/domain/metric-catalog/specs/PRD.md`) | Owns metric metadata, scoped thresholds (`{ product-default, tenant, role, team, team+role }` with precedence `team+role → team → role → tenant → product-default`), `GET /catalog/metrics`; this PRD consumes the catalog and supplies the `role_slug` / `team_id` values the scope chain operates on. Team-lead writes (post-MVP) target `scope = 'team'` or `scope = 'team+role'` | p1 |
 | MariaDB | Hosts `role_catalog`, `role_alias`, `dashboard`, `dashboard_widget` tables, plus team-scoped override tables for `cpt-dash-cfg-fr-team-lead-customization` | p1 |
 | Analytics API service | Backend service implementing `/catalog/*` endpoints, dashboard resolution, and metric query resolution | p1 |
 | Identity Resolution service | Existing `insight-identity-resolution` deployment; returns per-person identity records used to resolve subject role for dashboard selection | p1 |
