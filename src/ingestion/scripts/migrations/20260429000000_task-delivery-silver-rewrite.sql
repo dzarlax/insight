@@ -135,7 +135,11 @@ WITH issue_state AS (
         minIf(event_at, event_kind = 'synthetic_initial')                         AS created_at,
         maxIf(event_at,
               field_id = 'status' AND delta_action = 'set'
-              AND value_displays[1] IN ('Closed','Resolved','Verified'))          AS final_close_at
+              AND value_displays[1] IN ('Closed','Resolved','Verified'))          AS final_close_at,
+        -- Most recent status change of any kind. Used by `stale_in_progress`
+        -- to flag issues that haven't moved in N days. Hoisted into this
+        -- view so consumers don't need a second scan of class_task_field_history.
+        maxIf(event_at, field_id = 'status' AND delta_action = 'set')             AS last_status_event_at
     FROM silver.class_task_field_history
     WHERE field_id IN ('status','assignee','issuetype','priority','duedate',
                        'timeoriginalestimate','timespent')
@@ -155,6 +159,7 @@ SELECT
     s.time_spent_seconds_field                                       AS time_spent_seconds_field,
     s.created_at                                                     AS created_at,
     s.final_close_at                                                 AS final_close_at,
+    s.last_status_event_at                                           AS last_status_event_at,
     lower(u.email)                                                   AS assignee_email,
     p.org_unit_id                                                    AS org_unit_id
 FROM issue_state AS s
@@ -298,19 +303,24 @@ GROUP BY s.assignee_email, s.insight_source_id, s.issue_id, close_date;
 -- a close→reopen→close cycle contributes 2 closes and 1 reopen. Counting
 -- only `final_close_at` would have produced 1 close / 1 reopen and made
 -- the rate read 100% for what is structurally a 50% rebound.
+-- Both views derive transitions from `task_status_intervals`. Each
+-- interval row already represents one status change at `interval_start`,
+-- pre-deduplicated by the source MV's FINAL read. We use a window
+-- function to look at the previous interval's status — same shape as
+-- the earlier silver-direct version, but reads ~10× less data and avoids
+-- a redundant FINAL scan over class_task_field_history.
 CREATE VIEW insight.task_close_events_daily AS
 WITH transitions AS (
     SELECT
-        h.insight_source_id,
-        h.issue_id,
-        h.event_at,
-        h.value_displays[1] AS status_name,
-        lagInFrame(h.value_displays[1]) OVER (
-            PARTITION BY h.insight_source_id, h.issue_id
-            ORDER BY h.event_at
+        insight_source_id,
+        issue_id,
+        interval_start AS event_at,
+        status_name,
+        lagInFrame(status_name) OVER (
+            PARTITION BY insight_source_id, issue_id
+            ORDER BY interval_start
         ) AS prev_status
-    FROM silver.class_task_field_history AS h FINAL
-    WHERE h.field_id = 'status' AND h.delta_action = 'set'
+    FROM insight.task_status_intervals
 )
 SELECT
     s.assignee_email                                             AS assignee_email,
@@ -329,16 +339,15 @@ GROUP BY assignee_email, event_date;
 CREATE VIEW insight.task_reopen_events_daily AS
 WITH transitions AS (
     SELECT
-        h.insight_source_id,
-        h.issue_id,
-        h.event_at,
-        h.value_displays[1] AS status_name,
-        lagInFrame(h.value_displays[1]) OVER (
-            PARTITION BY h.insight_source_id, h.issue_id
-            ORDER BY h.event_at
+        insight_source_id,
+        issue_id,
+        interval_start AS event_at,
+        status_name,
+        lagInFrame(status_name) OVER (
+            PARTITION BY insight_source_id, issue_id
+            ORDER BY interval_start
         ) AS prev_status
-    FROM silver.class_task_field_history AS h FINAL
-    WHERE h.field_id = 'status' AND h.delta_action = 'set'
+    FROM insight.task_status_intervals
 )
 SELECT
     s.assignee_email                                             AS assignee_email,
@@ -629,21 +638,11 @@ SELECT
     CAST(toFloat64(count()) AS Nullable(Float64))                AS metric_value
 FROM insight.task_issue_current_state AS s
 LEFT JOIN insight.people AS p ON s.assignee_email = p.person_id
-LEFT JOIN (
-    SELECT
-        insight_source_id,
-        issue_id,
-        max(event_at) AS last_status_event_at
-    FROM silver.class_task_field_history FINAL
-    WHERE field_id = 'status' AND delta_action = 'set'
-    GROUP BY insight_source_id, issue_id
-) AS le
-    ON le.insight_source_id = s.insight_source_id AND le.issue_id = s.issue_id
 WHERE (s.status_name IS NULL OR s.status_name NOT IN ('Closed','Resolved','Verified'))
   AND s.assignee_email IS NOT NULL
   AND s.assignee_email != ''
-  AND le.last_status_event_at IS NOT NULL
-  AND dateDiff('day', le.last_status_event_at, now()) > 14
+  AND s.last_status_event_at IS NOT NULL
+  AND dateDiff('day', s.last_status_event_at, now()) > 14
 GROUP BY s.assignee_email, p.org_unit_id;
 
 -- =====================================================================
