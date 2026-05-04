@@ -79,11 +79,16 @@ That's it. No per-connector pipeline plumbing.
 Per-environment ownership matrix until the delivery channel is wired (see
 [Open work](#open-work)).
 
-| Consumer | What they read | When | Action |
+Ownership for "ingestion on-call" and "connector owner" is not assigned yet
+(no rotation document, no `CODEOWNERS` for `src/ingestion/connectors/*` as
+of this commit). The matrix below describes the *roles* the freshness
+signal expects to land on; see [Open work](#open-work) for the rotation gap.
+
+| Role | What they read | When | Action |
 |---|---|---|---|
-| Ingestion on-call (Anton, currently) | Argo UI, workflow status of `dbt-source-freshness-check` in `argo` namespace | Daily, after the 13:00 UTC run | Triage `error` / `runtime error` runs |
-| `cyberfabric/insight` repo Issues | One issue per persistent breach (>2 consecutive runs) opened by the on-call | Within 1 business day of the breach | Hand off to the connector owner per `team:data` ownership matrix |
-| Connector owner (`mozhaev-dev`, `mitasovr`, …) | The issue body — includes the failing source, max-loaded-at, lag in hours | On issue assignment | Fix the connector or update the SLA |
+| Ingestion on-call (TBD) | Argo UI / `kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp` for the `dbt-source-freshness-check` runs | Daily, after the 13:00 UTC run | Triage `error` / `runtime error` runs |
+| `cyberfabric/insight` repo Issues | One issue per persistent breach (>2 consecutive runs) opened by the on-call | Within 1 business day of the breach | Hand off to the connector owner |
+| Connector owner (TBD per connector) | The issue body — includes the failing source, max-loaded-at, lag in hours | On issue assignment | Fix the connector or update the SLA |
 | Tenant on-call (post-MVP) | Webhook payload (Zulip / email / generic POST) routed by `cluster` field | Real-time | Same triage as above, scoped to one deployment |
 
 Until the webhook channel lands, the **only** push mechanism is Argo's
@@ -96,6 +101,18 @@ retained for inspection.
 `successfulJobsHistoryLimit: 3`) — silent green is the desired steady state.
 
 ## Open work
+
+### Rotation / ownership — not assigned
+
+The matrix above describes roles, not people. There is no documented
+ingestion on-call rotation as of this commit, and `src/ingestion/connectors/`
+has no `CODEOWNERS` entries assigning per-connector owners. Until that
+lands, the freshness signal lives in Argo's failed-runs list with no
+named consumer.
+
+Action: agree on an on-call rotation (or a single owner during MVP) and
+add a `CODEOWNERS` block listing the per-connector owner so the breach
+hand-off has a real target.
 
 ### Delivery channel — to be decided
 
