@@ -145,6 +145,51 @@ spec:
           # to live in the toolbox image's working directory.
           rm -f target/sources.json
 
+          # Narrow the freshness selector to bronze_* databases that actually
+          # exist in this deployment. The freshness check answers "is the
+          # data we ARE collecting stale?" — it deliberately does not detect
+          # "is a connector that should be deployed actually deployed?".
+          # That is a separate deployment-health concern (Helm probes / sync
+          # workflow status) tracked under a separate issue. Without this
+          # narrowing, a tenant that doesn't run, say, the OpenAI connector
+          # would see one ERROR per OpenAI source on every freshness run.
+          if [ "$DBT_SELECT" = "source:*" ]; then
+            EXISTING_DBS=$(python3 - <<'PY'
+          import os, sys, urllib.parse, urllib.request
+          url = "http://" + os.environ["CLICKHOUSE_HOST"] + ":" + os.environ["CLICKHOUSE_PORT"] + "/"
+          # ClickHouse LIKE has no ESCAPE clause; `startsWith` avoids the
+          # underscore-as-wildcard pitfall. We don't currently have any
+          # database whose name begins with `bronze` but isn't a bronze
+          # source, so the prefix is precise enough.
+          sql = "SELECT name FROM system.databases WHERE startsWith(name, 'bronze_') FORMAT TabSeparated"
+          qs = urllib.parse.urlencode({
+              "user": os.environ["CLICKHOUSE_USER"],
+              "password": os.environ["CLICKHOUSE_PASSWORD"],
+              "query": sql,
+          })
+          try:
+              with urllib.request.urlopen(url + "?" + qs, timeout=30) as resp:
+                  print(resp.read().decode("utf-8"))
+          except Exception as e:
+              print(f"freshness: failed to enumerate bronze databases ({e}) — falling back to full source:* selector", file=sys.stderr)
+              sys.exit(0)
+          PY
+          )
+            if [ -n "$EXISTING_DBS" ]; then
+              EFFECTIVE_SELECT=""
+              for db in $EXISTING_DBS; do
+                EFFECTIVE_SELECT="$EFFECTIVE_SELECT source:$db"
+              done
+              EFFECTIVE_SELECT="${EFFECTIVE_SELECT# }"
+              echo "freshness: narrowed selector to deployed bronze databases — $EFFECTIVE_SELECT"
+            else
+              EFFECTIVE_SELECT="$DBT_SELECT"
+            fi
+          else
+            # User-supplied selector is already specific; honor it verbatim.
+            EFFECTIVE_SELECT="$DBT_SELECT"
+          fi
+
           # `dbt source freshness` exits non-zero when any source breaches
           # SLA. We swallow the exit code here and re-derive the workflow
           # outcome from `target/sources.json` below — dbt does not
@@ -152,7 +197,7 @@ spec:
           # SLA thresholds are read by dbt via `env_var(...)` in
           # `dbt_project.yml` / schema.yml — already exported above.
           set +e
-          dbt source freshness --profiles-dir . --select "$DBT_SELECT"
+          dbt source freshness --profiles-dir . --select "$EFFECTIVE_SELECT"
           set -e
 
           # Parse target/sources.json. Exit semantics (set by the script):
