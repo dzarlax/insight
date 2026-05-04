@@ -338,11 +338,25 @@ spec:
                   unique_id = r.get("unique_id", "?")
                   max_loaded_at = r.get("max_loaded_at")
                   age_seconds = r.get("max_loaded_at_time_ago_in_s")
+                  # Empty-table sentinel: dbt-clickhouse computes
+                  # `MAX(<col>)` over zero rows as NULL, which serialises
+                  # as the Unix epoch (`1970-01-01T00:00:00+00:00`) plus
+                  # an enormous `age_in_s`. Raw output reads as ~500k
+                  # hours of lag, which looks like a parser bug rather
+                  # than the real signal ("the source has never received
+                  # a single row"). Flag it explicitly.
+                  empty = (
+                      isinstance(max_loaded_at, str)
+                      and max_loaded_at.startswith("1970-01-01")
+                  )
                   breaches.append({
                       "source": unique_id,
                       "status": status,
-                      "max_loaded_at": max_loaded_at,
-                      "age_hours": round(age_seconds / 3600, 1) if age_seconds is not None else None,
+                      "max_loaded_at": "(table is empty)" if empty else max_loaded_at,
+                      "age_hours": None if empty else (
+                          round(age_seconds / 3600, 1) if age_seconds is not None else None
+                      ),
+                      "empty": empty,
                   })
 
           if not breaches:
@@ -351,8 +365,12 @@ spec:
 
           print(f"freshness: {len(breaches)} source(s) breaching SLA:")
           for b in breaches:
-              age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
-              print(f"  [{b['status']:>5}] {b['source']} (max_loaded_at={b['max_loaded_at']}, age={age})")
+              if b.get("empty"):
+                  detail = "(table is empty — no rows ever ingested)"
+              else:
+                  age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
+                  detail = f"max_loaded_at={b['max_loaded_at']}, age={age}"
+              print(f"  [{b['status']:>5}] {b['source']} {detail}")
 
           # Notification fan-out. The driver selects the body format and
           # any driver-specific transport. URL comes from a k8s Secret
@@ -379,13 +397,17 @@ spec:
           summary = f"{_prefix}{len(breaches)} bronze source(s) breaching freshness SLA"
           has_page_status = any(b["status"] in PAGE_STATUSES for b in breaches)
 
-          def _line_md(b):
+          def _detail(b):
+              if b.get("empty"):
+                  return "table is empty (no rows ingested)"
               age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
-              return f"- `[{b['status']}]` `{b['source']}` — max_loaded_at={b['max_loaded_at']}, age={age}"
+              return f"max_loaded_at={b['max_loaded_at']}, age={age}"
+
+          def _line_md(b):
+              return f"- `[{b['status']}]` `{b['source']}` — {_detail(b)}"
 
           def _line_plain(b):
-              age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
-              return f"  [{b['status']}] {b['source']} — max_loaded_at={b['max_loaded_at']}, age={age}"
+              return f"  [{b['status']}] {b['source']} — {_detail(b)}"
 
           def _post(req_url, body, headers):
               # Some receivers sit behind Cloudflare / WAF and reject the
@@ -441,8 +463,7 @@ spec:
               # Slack mrkdwn: single `*` for bold (vs `**` in Zulip
               # native), backtick spans and bullet lists work the same.
               def _line_slack(b):
-                  age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
-                  return f"• `[{b['status']}]` `{b['source']}` — max_loaded_at={b['max_loaded_at']}, age={age}"
+                  return f"• `[{b['status']}]` `{b['source']}` — {_detail(b)}"
               md = [f"*{summary}*", "", *(_line_slack(b) for b in breaches)]
               # Zulip's Slack-compatible incoming webhook expects
               # legacy-Slack form fields: `user_name`, `text`,
