@@ -116,6 +116,12 @@ spec:
               yaml.safe_dump(profile, f)
           PY
 
+          # Drop any stale freshness report first. If dbt crashes mid-run we
+          # want exit code 2 below, not a misclassification using a leftover
+          # `target/sources.json` from a prior invocation that still happens
+          # to live in the toolbox image's working directory.
+          rm -f target/sources.json
+
           # `dbt source freshness` exits non-zero when any source breaches
           # SLA. We swallow the exit code here and re-derive the workflow
           # outcome from `target/sources.json` below — dbt does not

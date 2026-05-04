@@ -3,10 +3,14 @@ version: 2
 sources:
   - name: bamboohr
     schema: bronze_bamboohr
-    # Default freshness SLA inherited from `src/ingestion/dbt/dbt_project.yml`.
-    # `employees` is full-refresh — every sync rewrites the table so SLA holds.
-    # `leave_requests` and `meta_fields` are exempt below: legitimate days
-    # produce zero new rows (no one took leave / no admin field changes).
+    # Freshness window (30h warn / 48h error) is inherited from the
+    # project-level `+freshness` block in `src/ingestion/dbt/dbt_project.yml`.
+    # `loaded_at_field` must be declared per source — dbt does not propagate
+    # it from the project file. `employees` is full-refresh — every sync
+    # rewrites the table so SLA holds. `leave_requests` and `meta_fields`
+    # are exempt below: legitimate days produce zero new rows (no one took
+    # leave / no admin field changes).
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: employees
       - name: leave_requests

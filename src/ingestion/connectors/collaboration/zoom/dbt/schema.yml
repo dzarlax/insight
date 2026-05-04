@@ -3,6 +3,7 @@ version: 2
 sources:
   - name: bronze_zoom
     schema: bronze_zoom
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: users
       - name: meetings

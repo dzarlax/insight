@@ -3,6 +3,7 @@ version: 2
 sources:
   - name: bronze_slack
     schema: bronze_slack
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: users_details
 

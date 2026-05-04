@@ -3,6 +3,7 @@ version: 2
 sources:
   - name: bronze_cursor
     schema: bronze_cursor
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: cursor_members
       - name: cursor_audit_logs

@@ -29,26 +29,35 @@ on-run-start:
   - "{{ create_task_field_history_staging() }}"
 
 # ---------------------------------------------------------------------------
-# Bronze freshness SLA (single source of truth).
+# Bronze freshness SLA — threshold defaults.
 #
-# Every Airbyte-managed bronze source automatically inherits this policy:
-#   - `_airbyte_extracted_at` is set per-row by Airbyte's ClickHouse
-#     destination on every sync — MAX(extracted_at) tracks "did the last
-#     sync produce any rows?".
+# Project-level `+freshness` propagates to every source under this project,
+# so connectors do not need to repeat the warn/error thresholds.
+#
+# Why these numbers:
 #   - All connectors run on a daily cron (02:00–11:00 UTC). 30h warn / 48h
 #     error gives ~6h grace past the next expected run before paging.
+#   - `_airbyte_extracted_at` is set per row by Airbyte's ClickHouse
+#     destination on every sync — MAX(extracted_at) tracks "did the last
+#     sync produce any rows?".
 #
-# Connectors do NOT need to repeat these blocks in their own `schema.yml`.
-# Per-table opt-outs (`freshness: null`) belong in `schema.yml` next to the
-# table — those are domain decisions for slow-moving catalog/lookup streams.
-# Faster cadences (sub-daily) override at the source level in `schema.yml`.
+# `loaded_at_field` is intentionally NOT declared at project level: it is a
+# property, not a config, and dbt does not propagate it from this file. Each
+# bronze source must declare `loaded_at_field: _airbyte_extracted_at` at
+# source level in its connector `schema.yml`. The dbt-clickhouse adapter
+# does not support metadata-based freshness, so a missing `loaded_at_field`
+# turns into a runtime error rather than a default.
+#
+# Per-table opt-outs (`freshness: null`) belong in connector `schema.yml`
+# next to the table — those are domain decisions for slow-moving
+# catalog/lookup streams. Faster cadences (sub-daily) override at the source
+# level in `schema.yml`.
 #
 # Run via: `dbt source freshness --profiles-dir . --select source:bronze_*`.
 # Triggered by the `dbt-source-freshness-check` CronWorkflow.
 # ---------------------------------------------------------------------------
 sources:
   ingestion:
-    +loaded_at_field: _airbyte_extracted_at
     +freshness:
       warn_after: { count: 30, period: hour }
       error_after: { count: 48, period: hour }

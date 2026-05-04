@@ -3,6 +3,7 @@ version: 2
 sources:
   - name: bronze_github
     schema: bronze_github
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: repositories
       - name: branches

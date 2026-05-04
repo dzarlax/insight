@@ -3,3 +3,10 @@
 **/.venv/**
 **/node_modules/**
 **/__pycache__/**
+
+# Any `*.disabled/` directory under model-paths is intentionally not part
+# of the active set. dbt walks model-paths recursively and would otherwise
+# parse `connectors/*/dbt.disabled/schema.yml` (sources for un-deployed
+# connectors) and `silver/*.disabled/*.sql` (silver models that depend on
+# those sources). Both produce false-positive errors.
+**/*.disabled/**

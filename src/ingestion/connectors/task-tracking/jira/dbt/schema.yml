@@ -7,10 +7,12 @@ version: 2
 sources:
   - name: bronze_jira
     schema: bronze_jira
-    # Freshness defaults (loaded_at_field + warn/error thresholds) live in
-    # `src/ingestion/dbt/dbt_project.yml` under `sources:` and apply to every
-    # bronze source automatically. Per-table `freshness: null` below opts out
+    # Freshness window (30h warn / 48h error) is inherited from the
+    # project-level `+freshness` block in `src/ingestion/dbt/dbt_project.yml`.
+    # `loaded_at_field` must be declared per source — dbt does not propagate
+    # it from the project file. Per-table `freshness: null` below opts out
     # of the daily SLA for slow-moving catalog streams.
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: jira_fields
       - name: jira_projects

@@ -3,21 +3,25 @@ version: 2
 sources:
   - name: bronze_claude_enterprise
     schema: bronze_claude_enterprise
-    # Default freshness SLA inherited from `src/ingestion/dbt/dbt_project.yml`.
-    # This connector's sync runs daily at 11:00 UTC (after Anthropic's 10:00
-    # UTC aggregation window). `claude_enterprise_collection_runs` is the
-    # per-run heartbeat. Catalog streams (chat_projects, skills, connectors)
-    # are exempt — they change rarely.
+    # Freshness window (30h warn / 48h error) is inherited from the
+    # project-level `+freshness` block in `src/ingestion/dbt/dbt_project.yml`.
+    # `loaded_at_field` must be declared per source (dbt does not propagate it
+    # from the project file). This connector's sync runs daily at 11:00 UTC
+    # (after Anthropic's 10:00 UTC aggregation window).
+    # `claude_enterprise_collection_runs` is the per-run heartbeat. Catalog
+    # streams (chat_projects, skills, connectors) are exempt — they change
+    # rarely.
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: claude_enterprise_summaries
       - name: claude_enterprise_users
-      - name: claude_enterprise_collection_runs
       - name: claude_enterprise_chat_projects
         freshness: null
       - name: claude_enterprise_skills
         freshness: null
       - name: claude_enterprise_connectors
         freshness: null
+      - name: claude_enterprise_collection_runs
 
 models:
   - name: claude_enterprise__ai_dev_usage

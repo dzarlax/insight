@@ -1,25 +1,44 @@
-# Ingestion Monitoring
+# Ingestion Monitoring — operator runbook
 
 Goal: detect "data is missing for several days" before users notice. Today's
 coverage is **freshness only** — newly arrived rows in bronze tables. Volume
 and Airbyte-job-level signals are listed under [Open work](#open-work).
 
+This file is the operator-facing runbook (verification steps, on-call
+matrix, parser exit codes, payload shape). The feature design itself —
+purpose, threshold inheritance, acceptance criteria — lives in
+[`docs/domain/ingestion/specs/feature-bronze-freshness-sla/FEATURE.md`](../../docs/domain/ingestion/specs/feature-bronze-freshness-sla/FEATURE.md).
+
 ## What's wired
 
 ### Bronze freshness (live)
 
-Every Airbyte-managed bronze source automatically inherits a 30h-warn /
-48h-error SLA against `_airbyte_extracted_at`. The SLA is defined once in
-`src/ingestion/dbt/dbt_project.yml`:
+Every Airbyte-managed bronze source inherits a 30h-warn / 48h-error
+threshold against `_airbyte_extracted_at`. The threshold is defined once at
+project level in `src/ingestion/dbt/dbt_project.yml`:
 
 ```yaml
 sources:
   ingestion:
-    +loaded_at_field: _airbyte_extracted_at
     +freshness:
       warn_after:  { count: 30, period: hour }
       error_after: { count: 48, period: hour }
 ```
+
+Each source's `schema.yml` then declares the field to check:
+
+```yaml
+sources:
+  - name: bronze_<connector>
+    schema: bronze_<connector>
+    loaded_at_field: _airbyte_extracted_at
+    tables: ...
+```
+
+`loaded_at_field` is a dbt **property**, not a config — `+loaded_at_field`
+at project level is silently ignored. The dbt-clickhouse adapter does not
+support metadata-based freshness, so a source missing `loaded_at_field`
+fails with `runtime error` instead of falling back to a default.
 
 A single CronWorkflow `dbt-source-freshness-check` runs `dbt source freshness`
 daily at 13:00 UTC (after every connector's sync window of 02:00–11:00 UTC)
@@ -54,6 +73,27 @@ controls:
    level in `schema.yml` with their own `freshness:` block.
 
 That's it. No per-connector pipeline plumbing.
+
+## Who consumes the signal
+
+Per-environment ownership matrix until the delivery channel is wired (see
+[Open work](#open-work)).
+
+| Consumer | What they read | When | Action |
+|---|---|---|---|
+| Ingestion on-call (Anton, currently) | Argo UI, workflow status of `dbt-source-freshness-check` in `argo` namespace | Daily, after the 13:00 UTC run | Triage `error` / `runtime error` runs |
+| `cyberfabric/insight` repo Issues | One issue per persistent breach (>2 consecutive runs) opened by the on-call | Within 1 business day of the breach | Hand off to the connector owner per `team:data` ownership matrix |
+| Connector owner (`mozhaev-dev`, `mitasovr`, …) | The issue body — includes the failing source, max-loaded-at, lag in hours | On issue assignment | Fix the connector or update the SLA |
+| Tenant on-call (post-MVP) | Webhook payload (Zulip / email / generic POST) routed by `cluster` field | Real-time | Same triage as above, scoped to one deployment |
+
+Until the webhook channel lands, the **only** push mechanism is Argo's
+failed-runs list — on-call must check `kubectl get workflows -n argo
+--sort-by=.metadata.creationTimestamp` at least once per business day. The
+`failedJobsHistoryLimit: 5` ensures the latest five breaching runs are
+retained for inspection.
+
+`pass`-only runs leave no trace beyond Argo's success history (kept by
+`successfulJobsHistoryLimit: 3`) — silent green is the desired steady state.
 
 ## Open work
 

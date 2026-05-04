@@ -3,9 +3,12 @@ version: 2
 sources:
   - name: bronze_confluence
     schema: bronze_confluence
-    # Default freshness SLA inherited from `src/ingestion/dbt/dbt_project.yml`.
-    # `wiki_spaces` is exempt — spaces are created/archived rarely, no new
-    # rows on a typical day.
+    # Freshness window (30h warn / 48h error) is inherited from the
+    # project-level `+freshness` block in `src/ingestion/dbt/dbt_project.yml`.
+    # `loaded_at_field` must be declared per source — dbt does not propagate
+    # it from the project file. `wiki_spaces` is exempt — spaces are
+    # created/archived rarely, no new rows on a typical day.
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: wiki_spaces
         freshness: null

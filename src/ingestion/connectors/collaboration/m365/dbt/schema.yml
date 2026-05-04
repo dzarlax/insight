@@ -3,6 +3,7 @@ version: 2
 sources:
   - name: bronze_m365
     schema: bronze_m365
+    loaded_at_field: _airbyte_extracted_at
     tables:
       - name: email_activity
       - name: teams_activity
