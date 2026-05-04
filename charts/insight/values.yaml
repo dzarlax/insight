@@ -181,15 +181,106 @@ ingestion:
       # typical; 120h reserves paging for past-maintenance outages.
       reportExtendedWarnHours: 72
       reportExtendedErrorHours: 120
-    # Identifies the deployment in notification payloads (e.g. "prod",
-    # "staging", "tenant-acme"). Empty = single-deployment install.
+    # Identification labels included in every notification payload so
+    # receivers can route alerts when one bot is shared across multiple
+    # deployments / customers. Both default to empty — leaving them out
+    # of the summary entirely.
+    #   cluster — deployment / installation tier (e.g. "prod",
+    #             "staging", "dev-acme"). Reuses the existing knob.
+    #   tenant  — customer / workspace identifier (e.g. "acme-co",
+    #             "virtuozzo"). Set when one Insight installation
+    #             serves multiple tenants.
     cluster: ""
-    # Webhook URL for delivering breach notifications. Empty string = no
-    # fan-out (failures still surface via the Argo workflow status). The
-    # contract is generic JSON POST — Zulip / Mattermost / a custom relay
-    # all work. See `src/ingestion/MONITORING.md`.
-    # TODO: pick a delivery channel and set this in tenant overrides.
-    notificationWebhookUrl: ""
+    tenant: ""
+    # Notification delivery. Each driver has its own subblock with the
+    # settings it needs; `driver` selects which one is active and the
+    # rest are inert. New drivers (slack / mattermost / email / pagerduty
+    # / opsgenie) drop in by adding a sibling block + extending the
+    # parser branch in `dbt-source-freshness.yaml` — no other Helm
+    # surface needs to change.
+    #
+    # Every driver that needs an outgoing URL reads it from a Kubernetes
+    # Secret (mirrors the `clickhouse.passwordSecret` pattern) so the
+    # token is not rendered into manifests and not visible in the Argo UI.
+    notification:
+      # "" — no fan-out (default). Breaches still surface via Argo run
+      #      status / `failedJobsHistoryLimit`. Use this for clusters
+      #      that don't have an outgoing channel wired yet.
+      # "webhook" — generic JSON POST. Body shape:
+      #     { topic, cluster, summary, breaches: [...] }
+      #   Suitable for Mattermost / a custom relay / opsgenie ingest.
+      # "zulip"   — Zulip incoming-webhook integration. Body shape:
+      #     { "data": "<markdown summary>" }
+      # "slack"   — Slack incoming-webhook. Body shape:
+      #     { "text": "<markdown summary>" [, "channel": "<override>"] }
+      # "teams"   — Microsoft Teams incoming-webhook. Body shape:
+      #     MessageCard JSON with title / summary / text / themeColor.
+      # "email"   — SMTP. Plain-text body via stdlib smtplib (no extra
+      #             deps). Subject prefixed with `email.subjectPrefix`.
+      driver: ""
+
+      # ─── webhook driver ─────────────────────────────────────────────
+      webhook:
+        # Required when driver=webhook. The full POST URL lives in
+        # this Secret under `key`.
+        urlSecret:
+          name: ""
+          key: "url"
+
+      # ─── zulip driver ───────────────────────────────────────────────
+      zulip:
+        # Required when driver=zulip. Same shape as webhook.urlSecret.
+        urlSecret:
+          name: ""
+          key: "url"
+        # Optional — only set if your Zulip integration URL does not
+        # already carry stream / topic in its query string. When set,
+        # they are appended (or overridden) at POST time.
+        stream: ""
+        topic: ""
+
+      # ─── slack driver ───────────────────────────────────────────────
+      slack:
+        # Required when driver=slack. Slack incoming-webhook URL.
+        urlSecret:
+          name: ""
+          key: "url"
+        # Optional channel override. Slack incoming webhooks are bound
+        # to a default channel at creation; setting this overrides
+        # only if the workspace allows it (admin policy).
+        channel: ""
+
+      # ─── teams driver ───────────────────────────────────────────────
+      teams:
+        # Required when driver=teams. Microsoft Teams incoming-webhook
+        # URL. The URL is bound to a single channel at creation; there
+        # is no override knob (Teams admins can configure new webhooks
+        # per channel as needed).
+        urlSecret:
+          name: ""
+          key: "url"
+
+      # ─── email driver ───────────────────────────────────────────────
+      email:
+        smtp:
+          host: ""
+          port: 587            # 587 = STARTTLS, 465 = SMTPS, 25 = plain
+          username: ""         # SMTP AUTH user; password lives in Secret
+          # SMTP password — required when driver=email and the SMTP
+          # server requires AUTH. Put the password in a k8s Secret.
+          passwordSecret:
+            name: ""
+            key: "password"
+          # Use STARTTLS on connect. Ignored when port=465 (already
+          # implicit TLS).
+          starttls: true
+        # Envelope.
+        from: ""               # e.g. "ingestion-monitor@example.com"
+        # Comma-separated list of recipient addresses. Helm values do
+        # not support arrays through to env vars cleanly without a
+        # template loop; a single string is the simplest shape.
+        to: ""                 # e.g. "oncall@example.com,sre@example.com"
+        subjectPrefix: "[ingestion-freshness]"
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  INFRASTRUCTURE
