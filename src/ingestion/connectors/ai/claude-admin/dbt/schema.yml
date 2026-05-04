@@ -3,16 +3,25 @@ version: 2
 sources:
   - name: bronze_claude_admin
     schema: bronze_claude_admin
+    # Default freshness SLA (loaded_at_field + 30h warn / 48h error) is
+    # inherited from `src/ingestion/dbt/dbt_project.yml`. Per-table opt-outs
+    # below mark slow-moving catalog streams that legitimately produce zero
+    # rows on a quiet day. `claude_admin_collection_runs` keeps the default
+    # because it writes a heartbeat row per sync regardless of source volume.
     tables:
       - name: claude_admin_users
       - name: claude_admin_messages_usage
       - name: claude_admin_cost_report
       - name: claude_admin_code_usage
-      - name: claude_admin_api_keys
-      - name: claude_admin_workspaces
-      - name: claude_admin_workspace_members
-      - name: claude_admin_invites
       - name: claude_admin_collection_runs
+      - name: claude_admin_api_keys
+        freshness: null
+      - name: claude_admin_workspaces
+        freshness: null
+      - name: claude_admin_workspace_members
+        freshness: null
+      - name: claude_admin_invites
+        freshness: null
 
 models:
   - name: claude_admin__ai_api_usage

@@ -7,6 +7,10 @@ version: 2
 sources:
   - name: bronze_jira
     schema: bronze_jira
+    # Freshness defaults (loaded_at_field + warn/error thresholds) live in
+    # `src/ingestion/dbt/dbt_project.yml` under `sources:` and apply to every
+    # bronze source automatically. Per-table `freshness: null` below opts out
+    # of the daily SLA for slow-moving catalog streams.
     tables:
       - name: jira_fields
       - name: jira_projects
@@ -19,10 +23,16 @@ sources:
       - name: jira_boards
       # Normalized lookup streams — populated globally per source instance.
       # `jira_issue` references these by ID only; display names come from JOIN.
+      # No daily SLA: legitimate to see no new rows when the admin doesn't
+      # touch the workflow / priority schemes.
       - name: jira_statuses
+        freshness: null
       - name: jira_priorities
+        freshness: null
       - name: jira_issuetypes
+        freshness: null
       - name: jira_resolutions
+        freshness: null
 
   # Staging tables written by the Rust `jira-enrich` binary (not by dbt). DDL is
   # managed by the `create_task_field_history_staging` macro in `on-run-start`.
