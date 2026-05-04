@@ -61,6 +61,12 @@ def lint_file(schema_file: Path) -> list[str]:
         return []
 
     for source in doc.get("sources") or []:
+        # Bare `-` in YAML produces a None list element which is syntactically
+        # valid; skip it so a malformed schema.yml fails the lint with a
+        # clear "loaded_at_field missing" message instead of crashing on
+        # `None.get(...)`.
+        if not isinstance(source, dict):
+            continue
         name = source.get("name", "")
         schema = source.get("schema", "")
         # Identify bronze sources by either the dbt-side name OR the
@@ -84,6 +90,8 @@ def lint_file(schema_file: Path) -> list[str]:
                 )
             continue
         for table in tables:
+            if not isinstance(table, dict):
+                continue
             tname = table.get("name", "<unnamed>")
             if _opt_out(table):
                 if not _optout_reason(table):

@@ -80,7 +80,50 @@
                     "subjectPrefix": { "type": "string" }
                   }
                 }
-              }
+              },
+              "allOf": [
+                {
+                  "if":   { "properties": { "driver": { "const": "webhook" } }, "required": ["driver"] },
+                  "then": { "properties": { "webhook": { "$ref": "#/definitions/urlSecretBlock" } }, "required": ["webhook"] }
+                },
+                {
+                  "if":   { "properties": { "driver": { "const": "zulip" } }, "required": ["driver"] },
+                  "then": { "properties": { "zulip": { "$ref": "#/definitions/urlSecretBlock" } }, "required": ["zulip"] }
+                },
+                {
+                  "if":   { "properties": { "driver": { "const": "slack" } }, "required": ["driver"] },
+                  "then": { "properties": { "slack": { "$ref": "#/definitions/urlSecretBlock" } }, "required": ["slack"] }
+                },
+                {
+                  "if":   { "properties": { "driver": { "const": "teams" } }, "required": ["driver"] },
+                  "then": { "properties": { "teams": { "$ref": "#/definitions/urlSecretBlock" } }, "required": ["teams"] }
+                },
+                {
+                  "if":   { "properties": { "driver": { "const": "email" } }, "required": ["driver"] },
+                  "then": {
+                    "properties": {
+                      "email": {
+                        "type": "object",
+                        "required": ["smtp", "from", "to"],
+                        "properties": {
+                          "smtp": {
+                            "type": "object",
+                            "required": ["host"],
+                            "properties": {
+                              "host": { "type": "string", "minLength": 1 },
+                              "from": { "type": "string", "minLength": 1 },
+                              "to":   { "type": "string", "minLength": 1 }
+                            }
+                          },
+                          "from": { "type": "string", "minLength": 1 },
+                          "to":   { "type": "string", "minLength": 1 }
+                        }
+                      }
+                    },
+                    "required": ["email"]
+                  }
+                }
+              ]
             },
             "thresholds": {
               "type": "object",
@@ -147,6 +190,20 @@
       "properties": {
         "name": { "type": "string" },
         "key":  { "type": "string", "minLength": 1 }
+      }
+    },
+    "urlSecretBlock": {
+      "type": "object",
+      "required": ["urlSecret"],
+      "properties": {
+        "urlSecret": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "key":  { "type": "string", "minLength": 1 }
+          }
+        }
       }
     },
     "infraDep": {

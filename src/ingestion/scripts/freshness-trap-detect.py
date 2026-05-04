@@ -74,6 +74,16 @@ def ch_query(sql: str) -> str:
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         raise CHQueryError(f"HTTP {e.code}: {body[:200]}") from None
+    except urllib.error.URLError as e:
+        # DNS / refused / TLS / socket-level failures land here. Treat as
+        # transport errors so the caller skips the table without crashing
+        # the whole script.
+        raise CHQueryError(f"URLError: {e.reason}") from None
+    except (TimeoutError, OSError) as e:
+        # `socket.timeout` was aliased to `TimeoutError` in Py 3.10+;
+        # `OSError` covers connection-reset / broken-pipe at the socket
+        # layer that bypass the URLError translation.
+        raise CHQueryError(f"transport: {e}") from None
 
 
 def candidate_tables(connectors_root: Path) -> list[dict]:

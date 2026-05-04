@@ -74,9 +74,9 @@ keeps local `dbt source freshness` working without Helm rendering).
 | bronze_cursor (other tables) | `_airbyte_extracted_at` | default | |
 | bronze_github.* | `_airbyte_extracted_at` | default | |
 | bronze_jira.* | `_airbyte_extracted_at` | default | Event-style streams (incremental cursor) |
-| bronze_m365.{teams,email,onedrive,sharepoint}_activity | `parseDateTimeBestEffortOrNull(reportRefreshDate)` | default | Report-style (Microsoft Graph reports) — but Microsoft publishes daily incl weekends |
+| bronze_m365.{teams,email,onedrive,sharepoint}_activity | `parseDateTimeBestEffortOrNull(reportRefreshDate)` | **report** (48h/96h) | Microsoft Graph reports document 24-48h publish lag; warn at upper baseline |
 | bronze_openai.* | `_airbyte_extracted_at` | default | |
-| bronze_slack.users_details | `parseDateTimeBestEffortOrNull(date)` | default | Report-style (Slack admin.analytics.getFile) — daily incl weekends |
+| bronze_slack.users_details | `parseDateTimeBestEffortOrNull(date)` | **report_extended** (72h/120h) | Slack admin.analytics typical 3-day lag, up to 5 during Slack maintenance |
 | bronze_zoom.meetings | `parseDateTimeBestEffortOrNull(start_time)` | **event** | Re-fetches 30-day window; quiet weekends real |
 | bronze_zoom.participants | `parseDateTimeBestEffortOrNull(join_time)` | **event** | |
 | bronze_zoom.users | (opted out via `freshness: null`) | — | Roster |
@@ -93,15 +93,22 @@ fails with `runtime error` instead of falling back to a default.
 A single CronWorkflow `dbt-source-freshness-check` runs `dbt source freshness`
 daily at 13:00 UTC (after every connector's sync window of 02:00–11:00 UTC)
 and parses `target/sources.json`. Any source in `warn` or `error` is logged
-with name, max-loaded-at and lag, and (if a webhook URL is configured) the
-list is POSTed as JSON to a notification channel.
+with name, max-loaded-at and lag; if a notification driver is configured
+under `ingestion.freshness.notification.driver` (one of `webhook`, `zulip`,
+`slack`, `teams`, `email`), the breach list is dispatched through the
+matching driver. Driver shapes and credential bindings are documented in
+[`docs/domain/ingestion-monitoring/specs/DESIGN.md` §3.3](../../docs/domain/ingestion-monitoring/specs/DESIGN.md#33-api-contracts).
 
 | Status | Meaning | Workflow exit | What to do |
 |--------|---------|---------------|------------|
-| `pass` | MAX(`_airbyte_extracted_at`) within last 30h | 0 | Nothing |
-| `warn` | 30–48h lag (one missed run) | 0 (visible in log + payload) | Investigate during business hours |
-| `error` | >48h lag (multiple missed runs) | 1 (Argo Failed) | Page |
+| `pass` | MAX(`<anchor>`) within the source's tier `warn_after` window | 0 | Nothing |
+| `warn` | between `warn_after` and `error_after` (one missed run for daily-cadence sources) | 0 (visible in log + payload) | Investigate during business hours |
+| `error` | past `error_after` for the source's tier | 1 (Argo Failed) | Page |
 | `runtime error` | dbt couldn't even check the source (CH down, schema drift, query failure) | 1 (Argo Failed) | Page — investigate before trusting other sources |
+
+Concrete tier values come from the connector's source-level `freshness:`
+block and the Helm overlay (defaults `default` 30h/48h, `event` 72h/96h,
+`report` 48h/96h, `report_extended` 72h/120h).
 
 `error` and `runtime error` flip the workflow to Failed so Argo retains the
 run in `failedJobsHistoryLimit`. Warn-only runs stay Successful — the breach
@@ -200,51 +207,48 @@ Action: agree on an on-call rotation (or a single owner during MVP) and
 add a `CODEOWNERS` block listing the per-connector owner so the breach
 hand-off has a real target.
 
-### Delivery channel — to be decided
+### Delivery channel — driver-based
 
-`charts/insight/values.yaml` exposes
-`ingestion.freshness.notificationWebhookUrl`. Default is empty, so today
-breaches surface only via:
+`charts/insight/values.yaml` exposes notification routing under
+`ingestion.freshness.notification.*` (driver selector + per-driver
+subblock). When `driver: ""` (the default), breaches surface only via:
 
 - Argo UI / `kubectl get workflows -n argo -l app.kubernetes.io/component=ingestion-monitoring`
 - Workflow exit status (failed runs accumulate in
   `failedJobsHistoryLimit: 5`)
 
-We need a pull/push channel. Slack is not on the table. Candidates:
+Setting `driver` to one of `webhook`, `zulip`, `slack`, `teams`, `email`
+activates the matching driver's dispatcher; the URL or SMTP password is
+read from a Kubernetes Secret on a `secretKeyRef` env binding so the
+credential never lands in rendered manifests or Argo UI. Driver shapes,
+secret bindings, and observed quirks (Zulip endpoint rewrite, Cloudflare
+UA, Slack mrkdwn vs Zulip native) are documented in
+[`docs/domain/ingestion-monitoring/specs/DESIGN.md` §3.3](../../docs/domain/ingestion-monitoring/specs/DESIGN.md#33-api-contracts).
 
-| Option | Pros | Cons |
-|--------|------|------|
-| Zulip incoming webhook | We already use Zulip; one URL, native topics | Needs a bot, per-tenant channel mapping |
-| Email via the platform mailer | Reuse the existing notification-email path used by Backend alerts (see `docs/components/backend/specs/PRD.md` §5.6) | Latency, no threading |
-| Generic webhook → small relay (Cloud Function / k8s service) | Decouples delivery from connector pipeline | Extra moving part |
-| Argo `onExit` notification (e.g. `argoproj-labs/argo-notifications`) | First-class Argo support, retries, templating | Heavier setup |
-
-The workflow's POST body is intentionally **provider-agnostic** so we can
-swap any of these in without touching the connector code:
+The webhook driver's body remains provider-agnostic so a custom relay
+can sit in front of any of the above:
 
 ```json
 {
   "topic": "ingestion-freshness",
   "cluster": "prod",
-  "summary": "[prod] 3 bronze source(s) breaching freshness SLA",
+  "tenant": "acme-co",
+  "summary": "[cluster=prod, tenant=acme-co] 3 bronze source(s) breaching freshness SLA",
   "breaches": [
     {
       "source": "source.ingestion.bronze_jira.jira_issue",
       "status": "error",
       "max_loaded_at": "2026-04-28T03:14:21Z",
-      "age_hours": 51.2
+      "age_hours": 51.2,
+      "empty": false
     }
   ]
 }
 ```
 
-`cluster` is set from `ingestion.freshness.cluster` in values overrides. It
-identifies the deployment so receivers can route between staging/prod or
-per-tenant channels. Empty string is allowed for single-deployment installs;
-the `summary` then drops the `[…]` prefix.
-
-A Zulip incoming webhook expects `content` + topic in the URL — we'll need a
-2-line transformer if we go that route. Decision: TODO.
+`cluster` and `tenant` come from `ingestion.freshness.{cluster,tenant}`
+in values overrides — both empty by default; the `summary` drops empty
+labels from its prefix.
 
 ### Volume baseline (next iteration)
 
