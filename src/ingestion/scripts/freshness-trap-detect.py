@@ -99,9 +99,16 @@ def candidate_tables(connectors_root: Path) -> list[dict]:
             continue
         for source in doc.get("sources") or []:
             name = source.get("name", "")
-            if not isinstance(name, str) or not name.startswith("bronze_"):
-                continue
             schema = source.get("schema", name)
+            # Match bronze sources by either dbt name or CH schema (bamboohr
+            # uses `name: bamboohr, schema: bronze_bamboohr`).
+            is_bronze = (
+                isinstance(name, str) and name.startswith("bronze_")
+            ) or (
+                isinstance(schema, str) and schema.startswith("bronze_")
+            )
+            if not is_bronze:
+                continue
             source_anchor = source.get("loaded_at_field", "").strip()
             source_meta = source.get("meta") or {}
             for table in source.get("tables") or []:

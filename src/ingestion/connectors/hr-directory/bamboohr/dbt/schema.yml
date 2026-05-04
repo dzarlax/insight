@@ -15,8 +15,12 @@ sources:
       - name: employees
       - name: leave_requests
         freshness: null
+        meta:
+          freshness_optout_reason: "legitimate quiet days — not everyone takes leave every day"
       - name: meta_fields
         freshness: null
+        meta:
+          freshness_optout_reason: "catalog — admin-managed BambooHR field metadata, changes rarely"
 
 models:
   - name: to_class_people

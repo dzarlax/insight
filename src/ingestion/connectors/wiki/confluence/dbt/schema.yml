@@ -20,9 +20,13 @@ sources:
       error_after: { count: "{{ env_var('FRESHNESS_ERROR_EVENT_H', '96') | int }}", period: hour }
     tables:
       - name: wiki_spaces
-        freshness: null  # roster — created/archived rarely
+        freshness: null
+        meta:
+          freshness_optout_reason: "roster — spaces created/archived rarely"
       - name: wiki_pages
-        freshness: null  # roster (page lifecycle, not daily activity signal)
+        freshness: null
+        meta:
+          freshness_optout_reason: "roster — page lifecycle, not a daily activity signal (edits go through wiki_page_versions)"
       - name: wiki_page_versions
         loaded_at_field: parseDateTime64BestEffortOrNull(created_at, 3)
 

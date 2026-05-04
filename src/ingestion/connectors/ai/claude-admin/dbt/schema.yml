@@ -19,12 +19,20 @@ sources:
       - name: claude_admin_code_usage
       - name: claude_admin_api_keys
         freshness: null
+        meta:
+          freshness_optout_reason: "roster — API key lifecycle, not a daily-activity signal"
       - name: claude_admin_workspaces
         freshness: null
+        meta:
+          freshness_optout_reason: "roster — workspaces created rarely, no daily cadence"
       - name: claude_admin_workspace_members
         freshness: null
+        meta:
+          freshness_optout_reason: "roster — membership changes, not daily activity"
       - name: claude_admin_invites
         freshness: null
+        meta:
+          freshness_optout_reason: "roster — invites lifecycle, not daily activity"
       - name: claude_admin_collection_runs
 
 models:

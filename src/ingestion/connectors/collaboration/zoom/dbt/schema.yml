@@ -20,7 +20,9 @@ sources:
       error_after: { count: "{{ env_var('FRESHNESS_ERROR_EVENT_H', '96') | int }}", period: hour }
     tables:
       - name: users
-        freshness: null  # roster — Zoom account list, not a daily activity signal
+        freshness: null
+        meta:
+          freshness_optout_reason: "roster — Zoom account list, not a daily activity signal"
       - name: meetings
         loaded_at_field: parseDateTimeBestEffortOrNull(start_time)
       - name: participants

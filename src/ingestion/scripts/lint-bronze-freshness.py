@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """Validate freshness wiring in connector schema.yml files.
 
-Every `bronze_*` source declared under `src/ingestion/connectors/*/*/dbt/schema.yml`
-must have `loaded_at_field` so that `dbt source freshness` can compute a max
-timestamp. Without it the dbt-clickhouse adapter emits a runtime error per
-row, which silently masquerades as a freshness breach.
+Two checks per `bronze_*` source under
+`src/ingestion/connectors/*/*/dbt/schema.yml`:
 
-A source can satisfy the rule three ways:
-  1. Source-level `loaded_at_field` (covers all tables).
-  2. Per-table `loaded_at_field` (override for that table only).
-  3. Per-table `freshness: null` (explicit opt-out — catalog/roster streams).
+1. `loaded_at_field` is reachable for every monitored table.
+   - Source-level, OR
+   - Per-table override, OR
+   - Per-table `freshness: null` (explicit opt-out)
+   Without one of these the dbt-clickhouse adapter emits a runtime error
+   for that source, which silently masquerades as a freshness breach.
 
-Mixed forms are allowed. The rule fails only when at least one table has
-neither own `loaded_at_field` nor `freshness: null` AND the source has no
-`loaded_at_field` either.
+2. Every `freshness: null` opt-out carries a written reason in
+   `meta.freshness_optout_reason`. Bare `freshness: null` is too easy
+   to leave in by accident — once it lands, the table is invisible to
+   monitoring forever and nobody knows whether the opt-out was deliberate.
+   Forcing a one-line rationale at the time of writing keeps the audit
+   surface readable: `grep -A1 'freshness: null'` shows what every opt-out
+   is for.
 
 Run from repo root:
     python3 src/ingestion/scripts/lint-bronze-freshness.py
@@ -39,6 +43,14 @@ def _has_table_anchor(table: dict) -> bool:
     return isinstance(field, str) and field.strip() != ""
 
 
+def _optout_reason(table: dict) -> str | None:
+    meta = table.get("meta") or {}
+    reason = meta.get("freshness_optout_reason")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()
+    return None
+
+
 def lint_file(schema_file: Path) -> list[str]:
     errors: list[str] = []
     try:
@@ -50,7 +62,16 @@ def lint_file(schema_file: Path) -> list[str]:
 
     for source in doc.get("sources") or []:
         name = source.get("name", "")
-        if not isinstance(name, str) or not name.startswith("bronze_"):
+        schema = source.get("schema", "")
+        # Identify bronze sources by either the dbt-side name OR the
+        # ClickHouse schema. The bamboohr connector uses `name: bamboohr,
+        # schema: bronze_bamboohr`, so name-only matching would skip it.
+        is_bronze = (
+            isinstance(name, str) and name.startswith("bronze_")
+        ) or (
+            isinstance(schema, str) and schema.startswith("bronze_")
+        )
+        if not is_bronze:
             continue
         source_anchor = source.get("loaded_at_field")
         has_source_anchor = isinstance(source_anchor, str) and source_anchor.strip()
@@ -62,11 +83,20 @@ def lint_file(schema_file: Path) -> list[str]:
                     f"loaded_at_field"
                 )
             continue
-        if has_source_anchor:
-            continue
         for table in tables:
             tname = table.get("name", "<unnamed>")
-            if _opt_out(table) or _has_table_anchor(table):
+            if _opt_out(table):
+                if not _optout_reason(table):
+                    errors.append(
+                        f"{schema_file}: source '{name}.{tname}' has "
+                        f"`freshness: null` without a written rationale. "
+                        f"Add `meta.freshness_optout_reason: \"…\"` next to "
+                        f"the opt-out so future readers know why this table "
+                        f"is invisible to monitoring (e.g. \"roster — "
+                        f"full-refresh, no daily cadence\")."
+                    )
+                continue
+            if _has_table_anchor(table) or has_source_anchor:
                 continue
             errors.append(
                 f"{schema_file}: source '{name}.{tname}' has no "

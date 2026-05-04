@@ -11,11 +11,15 @@ sources:
     loaded_at_field: _airbyte_extracted_at
     tables:
       - name: cursor_members
-        freshness: null  # roster — full-refresh, no daily-cadence expectation
+        freshness: null
+        meta:
+          freshness_optout_reason: "roster — full-refresh, no daily-cadence expectation"
       - name: cursor_audit_logs
       - name: cursor_usage_events
       - name: cursor_usage_events_daily_resync
-        freshness: null  # 100% subset of cursor_usage_events — see #261
+        freshness: null
+        meta:
+          freshness_optout_reason: "100% subset of cursor_usage_events — see #261"
       - name: cursor_daily_usage
         loaded_at_field: fromUnixTimestamp64Milli(toInt64OrZero(toString(date)))
 

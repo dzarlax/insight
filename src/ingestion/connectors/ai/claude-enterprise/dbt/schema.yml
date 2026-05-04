@@ -17,10 +17,16 @@ sources:
       - name: claude_enterprise_users
       - name: claude_enterprise_chat_projects
         freshness: null
+        meta:
+          freshness_optout_reason: "roster — projects, not a daily-activity signal"
       - name: claude_enterprise_skills
         freshness: null
+        meta:
+          freshness_optout_reason: "catalog — skill list changes rarely"
       - name: claude_enterprise_connectors
         freshness: null
+        meta:
+          freshness_optout_reason: "catalog — connector list changes rarely"
       - name: claude_enterprise_collection_runs
 
 models:

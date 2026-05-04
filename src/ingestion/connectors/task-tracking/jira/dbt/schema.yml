@@ -29,12 +29,20 @@ sources:
       # touch the workflow / priority schemes.
       - name: jira_statuses
         freshness: null
+        meta:
+          freshness_optout_reason: "lookup catalog — workflow status definitions, change rarely"
       - name: jira_priorities
         freshness: null
+        meta:
+          freshness_optout_reason: "lookup catalog — priority list, changes rarely"
       - name: jira_issuetypes
         freshness: null
+        meta:
+          freshness_optout_reason: "lookup catalog — issue types, change rarely"
       - name: jira_resolutions
         freshness: null
+        meta:
+          freshness_optout_reason: "lookup catalog — resolution list, changes rarely"
 
   # Staging tables written by the Rust `jira-enrich` binary (not by dbt). DDL is
   # managed by the `create_task_field_history_staging` macro in `on-run-start`.
