@@ -7,7 +7,10 @@ and Airbyte-job-level signals are listed under [Open work](#open-work).
 This file is the operator-facing runbook (verification steps, on-call
 matrix, parser exit codes, payload shape). The feature design itself —
 purpose, threshold inheritance, acceptance criteria — lives in
-[`docs/domain/ingestion/specs/feature-bronze-freshness-sla/FEATURE.md`](../../docs/domain/ingestion/specs/feature-bronze-freshness-sla/FEATURE.md).
+[`docs/domain/ingestion-monitoring/specs/feature-bronze-freshness-sla/FEATURE.md`](../../docs/domain/ingestion-monitoring/specs/feature-bronze-freshness-sla/FEATURE.md).
+The companion PRD and DESIGN for the broader monitoring domain live next
+to it: [`PRD.md`](../../docs/domain/ingestion-monitoring/specs/PRD.md),
+[`DESIGN.md`](../../docs/domain/ingestion-monitoring/specs/DESIGN.md).
 
 ## What's wired
 

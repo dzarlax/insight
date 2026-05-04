@@ -5,6 +5,30 @@ date: 2026-05-04
 
 # Feature: Bronze Freshness SLA
 
+
+<!-- toc -->
+
+- [1. Feature Context](#1-feature-context)
+  - [1.1 Overview](#11-overview)
+  - [1.2 Purpose](#12-purpose)
+  - [1.3 Actors](#13-actors)
+  - [1.4 References](#14-references)
+- [2. Design](#2-design)
+  - [2.1 Threshold inheritance](#21-threshold-inheritance)
+  - [2.2 Per-table opt-out](#22-per-table-opt-out)
+  - [2.3 Workflow](#23-workflow)
+  - [2.4 Notification payload](#24-notification-payload)
+- [3. Definitions of Done](#3-definitions-of-done)
+  - [3.1 Threshold inheritance](#31-threshold-inheritance)
+  - [3.2 Per-table opt-out](#32-per-table-opt-out)
+  - [3.3 Workflow](#33-workflow)
+  - [3.4 Notification](#34-notification)
+  - [3.5 Local verification](#35-local-verification)
+- [4. Acceptance Criteria](#4-acceptance-criteria)
+- [5. Out of Scope](#5-out-of-scope)
+
+<!-- /toc -->
+
 Daily check that every Airbyte-managed `bronze_*` source has received fresh
 rows within the last 30 hours. The mechanism is a single dbt project policy
 plus an Argo `CronWorkflow` — no per-connector code changes are required for

@@ -365,6 +365,24 @@ name = "K8s Secret Credential Resolution"
 traceability = "DOCS-ONLY"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/ingestion-monitoring/specs/PRD.md"
+name = "Ingestion Monitoring PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/domain/ingestion-monitoring/specs/DESIGN.md"
+name = "Ingestion Monitoring Design"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "FEATURE"
+path = "docs/domain/ingestion-monitoring/specs/feature-bronze-freshness-sla/FEATURE.md"
+name = "Bronze Freshness SLA"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/domain/airbyte-connector/specs/DESIGN.md"
 name = "Airbyte Connector Development Guide"
