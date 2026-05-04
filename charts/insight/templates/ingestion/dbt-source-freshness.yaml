@@ -388,9 +388,26 @@ spec:
               return f"  [{b['status']}] {b['source']} — max_loaded_at={b['max_loaded_at']}, age={age}"
 
           def _post(req_url, body, headers):
+              # Some receivers sit behind Cloudflare / WAF and reject the
+              # default `Python-urllib/3.x` UA as a bot signature. Set an
+              # explicit, identifying UA so the request is allowed.
+              headers = {**headers, "User-Agent": "insight-freshness-monitor/1.0"}
               req = urllib.request.Request(req_url, data=body, headers=headers, method="POST")
-              with urllib.request.urlopen(req, timeout=10) as resp:
-                  print(f"freshness: notification posted via {driver} ({resp.status})")
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      print(f"freshness: notification posted via {driver} ({resp.status})")
+              except urllib.error.HTTPError as e:
+                  # Surface the upstream's response body — `urllib` only
+                  # exposes the status line by default and 4xx responses
+                  # from Zulip / Slack / Teams typically carry a JSON
+                  # error message that explains the rejection (wrong
+                  # API key, stream not subscribed, channel-locked, etc.).
+                  reason = ""
+                  try:
+                      reason = e.read().decode("utf-8", errors="replace")[:400]
+                  except Exception:
+                      pass
+                  raise RuntimeError(f"HTTP {e.code}: {reason}") from None
 
           def _send_webhook():
               payload = {
@@ -404,17 +421,40 @@ spec:
                     {"Content-Type": "application/json"})
 
           def _send_zulip():
+              # Zulip exposes two incoming-webhook integrations:
+              #   /api/v1/external/json  — dumps the body as a JSON code
+              #     block (a debugging/logging integration, no markdown).
+              #   /api/v1/external/slack — Slack-compatible, takes
+              #     `{"text": "<slack-mrkdwn>"}` and renders properly.
+              # The chart's URL is whatever the operator configured. If
+              # they pointed at `.../external/json` we silently rewrite
+              # the path to `.../external/slack` and use Slack mrkdwn so
+              # the message arrives formatted instead of dumped as JSON.
               stream = os.environ.get("NOTIFICATION_ZULIP_STREAM", "").strip()
               topic  = os.environ.get("NOTIFICATION_ZULIP_TOPIC", "").strip()
-              target = url
+              target = url.replace("/api/v1/external/json", "/api/v1/external/slack", 1)
               extras = []
               if stream: extras.append("stream=" + urllib.parse.quote(stream))
               if topic:  extras.append("topic="  + urllib.parse.quote(topic))
               if extras:
                   target += ("&" if "?" in target else "?") + "&".join(extras)
-              md = [f"**{summary}**", "", *(_line_md(b) for b in breaches)]
-              _post(target, json.dumps({"data": "\n".join(md)}).encode("utf-8"),
-                    {"Content-Type": "application/json"})
+              # Slack mrkdwn: single `*` for bold (vs `**` in Zulip
+              # native), backtick spans and bullet lists work the same.
+              def _line_slack(b):
+                  age = f"{b['age_hours']}h" if b['age_hours'] is not None else "n/a"
+                  return f"• `[{b['status']}]` `{b['source']}` — max_loaded_at={b['max_loaded_at']}, age={age}"
+              md = [f"*{summary}*", "", *(_line_slack(b) for b in breaches)]
+              # Zulip's Slack-compatible incoming webhook expects
+              # legacy-Slack form fields: `user_name`, `text`,
+              # `channel_name`. URL query carries stream/topic; the
+              # form fields carry the message itself.
+              body = urllib.parse.urlencode({
+                  "user_name":    "ingestion-freshness",
+                  "channel_name": "freshness",
+                  "text":         "\n".join(md),
+              })
+              _post(target, body.encode("utf-8"),
+                    {"Content-Type": "application/x-www-form-urlencoded"})
 
           def _send_slack():
               channel = os.environ.get("NOTIFICATION_SLACK_CHANNEL", "").strip()

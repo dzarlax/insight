@@ -229,13 +229,22 @@ ingestion:
 
       # ─── zulip driver ───────────────────────────────────────────────
       zulip:
-        # Required when driver=zulip. Same shape as webhook.urlSecret.
+        # Required when driver=zulip. The integration URL Zulip's UI
+        # gives you when you add an "Incoming webhook" integration
+        # already encodes stream/topic in its query string — paste it
+        # verbatim here. The parser silently rewrites the path from
+        # `.../external/json` (which dumps the body as a JSON code
+        # block) to `.../external/slack` (Zulip's Slack-compatible
+        # webhook, which renders markdown), so a JSON-style URL still
+        # produces a properly-formatted message.
         urlSecret:
           name: ""
           key: "url"
-        # Optional — only set if your Zulip integration URL does not
-        # already carry stream / topic in its query string. When set,
-        # they are appended (or overridden) at POST time.
+        # Routing overrides. Empty → use whatever's in the integration
+        # URL's query string. Non-empty → appended/overridden at POST
+        # time. Note Zulip stream names can contain a trailing
+        # zero-width space (U+200B); copy-pasting from the UI is
+        # safer than retyping.
         stream: ""
         topic: ""
 
