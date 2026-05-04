@@ -157,18 +157,30 @@ ingestion:
     # picks them up via `var('freshness_*_h')` references in
     # `src/ingestion/dbt/dbt_project.yml` and connector `schema.yml`.
     thresholds:
-      # "default" tier — daily-cadence sources where weekend rows still
-      # exist (M365 / Slack / Cursor reports, plus any source anchored on
-      # `_airbyte_extracted_at`). 30h warn / 48h error gives ~6h grace
-      # past the 24h cron cycle.
+      # All tiers use the same logic: warn fires at the upper edge of the
+      # source's documented normal cadence so we hear about widening lag
+      # as early as it leaves the stable band; error reserves paging for
+      # genuinely abnormal outages.
+      #
+      # "default" — streaming / event-cursor sources (Bitbucket, Jira,
+      # Cursor, BambooHR). 30h / 48h gives ~6h grace past the 24h cron.
       defaultWarnHours: 30
       defaultErrorHours: 48
-      # "event" tier — sources whose business activity has natural quiet
-      # days (Confluence edits, Zoom meetings, Bitbucket commits, etc.).
-      # 72h / 96h absorbs long weekends and short holidays without hiding
-      # a real upstream stop.
+      # "event" — natural-quiet-day sources (Confluence edits, Zoom
+      # meetings). 72h / 96h absorbs long weekends and short holidays.
       eventWarnHours: 72
       eventErrorHours: 96
+      # "report" — vendor analytics endpoints with ~24-48h documented
+      # publish lag (Microsoft 365 Graph Reports baseline). Warn at 48h
+      # fires at the upper edge of stated normal; 96h error is past it.
+      reportWarnHours: 48
+      reportErrorHours: 96
+      # "report_extended" — vendor analytics endpoints with ~3-day
+      # baseline (Slack admin.analytics.getFile typical lag, up to 5
+      # during Slack maintenance). Warn at 72h fires at the top of
+      # typical; 120h reserves paging for past-maintenance outages.
+      reportExtendedWarnHours: 72
+      reportExtendedErrorHours: 120
     # Identifies the deployment in notification payloads (e.g. "prod",
     # "staging", "tenant-acme"). Empty = single-deployment install.
     cluster: ""

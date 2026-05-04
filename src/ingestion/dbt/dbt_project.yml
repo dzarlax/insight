@@ -37,12 +37,20 @@ on-run-start:
 # them via `--vars` constructed from `ingestion.freshness.thresholds.*` in
 # Helm values, so ops can tune SLA per environment without editing this file.
 #
-# Two threshold tiers:
-#   - default — daily-cadence sources (most connectors). 30h/48h gives ~6h
-#     grace past the next expected run.
-#   - event — connectors whose business activity has natural quiet days
-#     (Confluence edits, Zoom meetings, etc.). 72h/96h absorbs long
-#     weekends and short holidays without sacrificing real-stop detection.
+# Four threshold tiers — picked so warn fires at the upper edge of each
+# vendor's documented normal cadence (alert as early as stable):
+#   - default (30h/48h) — daily-cadence sources where extracted_at follows
+#     business time (most connectors). ~6h grace past the next run.
+#   - event (72h/96h) — connectors whose business activity has natural
+#     quiet days (Confluence edits, Zoom meetings). Absorbs long weekends
+#     and short holidays without sacrificing real-stop detection.
+#   - report (48h/96h) — vendor analytics endpoints with ~1-2 day publish
+#     lag. Microsoft 365 Graph Reports document 24-48h baseline; warn at
+#     48h fires when the lag reaches the upper edge of stated normal.
+#   - report_extended (72h/120h) — vendor analytics endpoints with ~3-day
+#     baseline. Slack admin.analytics.getFile typically 3 days, up to 5
+#     during Slack maintenance. Warn at 72h fires at the top of typical;
+#     120h error reserves paging for past-maintenance-window outages.
 #
 # `loaded_at_field` is a property (not a config) and dbt does not propagate
 # it from project level. Each bronze source declares its own

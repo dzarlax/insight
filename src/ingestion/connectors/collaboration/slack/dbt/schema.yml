@@ -9,6 +9,15 @@ sources:
     # date logic broken, etc.). Anchor freshness on the report's own `date`
     # column (the business day the per-user analytics row describes).
     loaded_at_field: parseDateTimeBestEffortOrNull(date)
+    # Threshold uses the "report_extended" tier (72h warn / 120h error by
+    # default, Helm-tunable). Slack admin analytics is documented and
+    # observed to lag ~3 days, with stretches up to 5 days during Slack-
+    # side maintenance. Warn at 72h fires at the upper edge of typical
+    # so we hear about widening lag immediately; 120h error reserves
+    # paging for past-maintenance outages.
+    freshness:
+      warn_after:  { count: "{{ env_var('FRESHNESS_WARN_REPORT_EXTENDED_H',  '72')  | int }}", period: hour }
+      error_after: { count: "{{ env_var('FRESHNESS_ERROR_REPORT_EXTENDED_H', '120') | int }}", period: hour }
     tables:
       - name: users_details
 

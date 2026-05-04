@@ -68,6 +68,14 @@ spec:
             value: "72"
           - name: error_event_h
             value: "96"
+          - name: warn_report_h
+            value: "48"
+          - name: error_report_h
+            value: "96"
+          - name: warn_report_extended_h
+            value: "72"
+          - name: error_report_extended_h
+            value: "120"
       # 20 min: dbt source freshness issues one CH query per source. With
       # the current connector set this finishes in ~2 min; the headroom
       # is for connector growth and CH cold-start cases.
@@ -104,6 +112,14 @@ spec:
             value: {{ `"{{inputs.parameters.warn_event_h}}"` }}
           - name: FRESHNESS_ERROR_EVENT_H
             value: {{ `"{{inputs.parameters.error_event_h}}"` }}
+          - name: FRESHNESS_WARN_REPORT_H
+            value: {{ `"{{inputs.parameters.warn_report_h}}"` }}
+          - name: FRESHNESS_ERROR_REPORT_H
+            value: {{ `"{{inputs.parameters.error_report_h}}"` }}
+          - name: FRESHNESS_WARN_REPORT_EXTENDED_H
+            value: {{ `"{{inputs.parameters.warn_report_extended_h}}"` }}
+          - name: FRESHNESS_ERROR_REPORT_EXTENDED_H
+            value: {{ `"{{inputs.parameters.error_report_extended_h}}"` }}
         source: |
           # SECURITY: every parameter reaches us via env vars only — no
           # interpolation into shell or YAML source. Same convention as
@@ -356,4 +372,12 @@ spec:
                     value: {{ .Values.ingestion.freshness.thresholds.eventWarnHours | quote }}
                   - name: error_event_h
                     value: {{ .Values.ingestion.freshness.thresholds.eventErrorHours | quote }}
+                  - name: warn_report_h
+                    value: {{ .Values.ingestion.freshness.thresholds.reportWarnHours | quote }}
+                  - name: error_report_h
+                    value: {{ .Values.ingestion.freshness.thresholds.reportErrorHours | quote }}
+                  - name: warn_report_extended_h
+                    value: {{ .Values.ingestion.freshness.thresholds.reportExtendedWarnHours | quote }}
+                  - name: error_report_extended_h
+                    value: {{ .Values.ingestion.freshness.thresholds.reportExtendedErrorHours | quote }}
 {{- end }}

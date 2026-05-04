@@ -34,10 +34,14 @@
             "thresholds": {
               "type": "object",
               "properties": {
-                "defaultWarnHours":  { "type": "integer", "minimum": 1 },
-                "defaultErrorHours": { "type": "integer", "minimum": 1 },
-                "eventWarnHours":    { "type": "integer", "minimum": 1 },
-                "eventErrorHours":   { "type": "integer", "minimum": 1 }
+                "defaultWarnHours":          { "type": "integer", "minimum": 1 },
+                "defaultErrorHours":         { "type": "integer", "minimum": 1 },
+                "eventWarnHours":            { "type": "integer", "minimum": 1 },
+                "eventErrorHours":           { "type": "integer", "minimum": 1 },
+                "reportWarnHours":           { "type": "integer", "minimum": 1 },
+                "reportErrorHours":          { "type": "integer", "minimum": 1 },
+                "reportExtendedWarnHours":   { "type": "integer", "minimum": 1 },
+                "reportExtendedErrorHours":  { "type": "integer", "minimum": 1 }
               }
             }
           }
