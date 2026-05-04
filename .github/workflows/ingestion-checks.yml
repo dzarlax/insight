@@ -1,0 +1,33 @@
+name: Ingestion Lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/ingestion/connectors/**/dbt/schema.yml"
+      - "src/ingestion/scripts/lint-bronze-freshness.py"
+      - ".github/workflows/ingestion-checks.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/ingestion/connectors/**/dbt/schema.yml"
+      - "src/ingestion/scripts/lint-bronze-freshness.py"
+      - ".github/workflows/ingestion-checks.yml"
+  workflow_dispatch:
+
+jobs:
+  bronze-freshness:
+    name: Bronze freshness wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install --no-cache-dir pyyaml
+
+      - name: Validate loaded_at_field on every bronze source
+        run: python3 src/ingestion/scripts/lint-bronze-freshness.py

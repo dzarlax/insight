@@ -121,6 +121,42 @@ controls:
 
 That's it. No per-connector pipeline plumbing.
 
+## Adding a new connector — freshness checklist
+
+1. In the new `connectors/<category>/<name>/dbt/schema.yml`, declare the
+   `bronze_*` source.
+2. Pick **one** of the three valid forms:
+   - **Streaming / event-cursor** (commits, issues, edits, etc.) — `loaded_at_field: _airbyte_extracted_at`. Inherits the default tier (30h/48h).
+   - **Report-style daily snapshot** (a connector that re-fetches a fixed window every run — e.g. Microsoft Graph reports, Slack admin.analytics, Cursor daily_usage) — `loaded_at_field: parseDateTimeBestEffortOrNull(<business_date_col>)`. Inherits default tier; weekend rows still expected because the upstream API publishes them.
+   - **Event-style with quiet weekends** (Confluence edits, Zoom meetings — connectors where a Saturday with zero rows is normal) — `loaded_at_field: ...(event_ts)` AND a source-level `freshness:` block that anchors on the event tier:
+
+     ```yaml
+     freshness:
+       warn_after:  { count: "{{ env_var('FRESHNESS_WARN_EVENT_H',  '72') | int }}", period: hour }
+       error_after: { count: "{{ env_var('FRESHNESS_ERROR_EVENT_H', '96') | int }}", period: hour }
+     ```
+
+3. For roster / catalog tables (rarely-changing lookup streams) add `freshness: null` per-table.
+
+4. CI runs `src/ingestion/scripts/lint-bronze-freshness.py` against every PR
+   that touches connector schemas — it fails the build if any `bronze_*`
+   source is missing `loaded_at_field` and is not opted out. The check can
+   be run locally:
+
+   ```bash
+   python3 src/ingestion/scripts/lint-bronze-freshness.py
+   ```
+
+   (uses PyYAML; the toolbox image has it already)
+
+5. **Trap to avoid**: if your connector re-emits a fixed window every run
+   (`SELECT count(), max(_airbyte_extracted_at) - min(_airbyte_extracted_at)
+   FROM bronze_<x>.<table>` shows all rows extracted within the last 24h
+   even though the table covers many days of history), `_airbyte_extracted_at`
+   will look fresh forever. Use the report-style or event-style form
+   instead. The lint can't detect this — it's a judgment call about the
+   source shape, documented per-source in the assignment table below.
+
 ## Who consumes the signal
 
 Per-environment ownership matrix until the delivery channel is wired (see
