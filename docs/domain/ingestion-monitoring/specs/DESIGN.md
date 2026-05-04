@@ -398,8 +398,9 @@ freshness verdict.
   `MAX(<bronze_business_date_col>)` to `MAX(_airbyte_extracted_at)`;
   flag ≥ 24 h gap (lines 202–227).
 - Honour `meta.bronze_freshness_trap_check: skip` per source/table.
-- Print findings to stderr; exit code is captured but not used to
-  override the parser's verdict.
+- Print finding lists to stdout; per-table query failures and bootstrap
+  errors go to stderr. Exit code is captured by the workflow but not
+  used to override the parser's verdict.
 
 ##### Responsibility boundaries
 
@@ -618,8 +619,12 @@ and surfaces the upstream's response body on `HTTPError`.
 
 #### Argo Workflows controller
 
-Provides `WorkflowTemplate` / `CronWorkflow` reconciliation. Pinned to
-v3.6.x via the umbrella chart.
+Provides `WorkflowTemplate` / `CronWorkflow` reconciliation. Argo is
+**not** a chart dependency of the umbrella — operators install it out
+of band (see [`scripts/install-argo.sh`](../../../../scripts/install-argo.sh)
+referenced in `charts/insight/Chart.yaml`'s preamble). Tested against
+v3.5.10 and v3.6.x; minimum CRDs needed are `workflows.argoproj.io`,
+`workflowtemplates.argoproj.io`, and `cronworkflows.argoproj.io`.
 
 #### dbt-clickhouse adapter
 
@@ -866,11 +871,15 @@ collected" to the deployment-health workstream
 
 The freshness check is the page-worthy signal — its threshold tiers are
 documented per source, its semantics are deterministic, its output is
-the canonical payload. The trap detector is heuristic (95 % / 2 days /
-100 rows are tunable thresholds) plus an opt-in. False positives on a
-heuristic that pages on-call would erode trust in the whole monitoring
-domain. So the trap detector logs, the freshness parser owns the
-verdict (workflow template lines 575–579).
+the canonical payload. The trap detector is heuristic — its thresholds
+(`SUSPECT_PCT_RECENT = 95.0`, `SUSPECT_MAX_DISTINCT_DAYS = 2`,
+`MIN_ROWS = 100`, `RECENT_WINDOW_HOURS = 30`) are hardcoded constants
+in [`freshness-trap-detect.py`](../../../../src/ingestion/scripts/freshness-trap-detect.py)
+rather than Helm-tunable values, so retuning is a code change with a
+PR review attached. False positives on a heuristic that pages on-call
+would erode trust in the whole monitoring domain. So the trap detector
+logs, the freshness parser owns the verdict (workflow template lines
+575–579).
 
 ### 4.7 Why `meta.freshness_optout_reason` is mandatory
 

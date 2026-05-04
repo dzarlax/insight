@@ -181,8 +181,8 @@ the dbt freshness check cannot see. Runs after the parser.
 
 | Dimension | Current | Projected |
 |---|---|---|
-| Bronze sources monitored | ~20 | 50+ |
-| Bronze tables monitored | ~80 | 150+ |
+| Bronze sources monitored | 12 (one per declared `bronze_*` schema) | 50+ |
+| Bronze tables monitored | ~80 (82 entries across 12 sources today) | 200+ |
 | Notification drivers supported | 5 | 5 (stable) |
 | SLA tiers | 4 | 4 (stable) |
 | Workflow runtime (warm CH) | ~2 min | < 5 min |
@@ -584,10 +584,13 @@ declares `loaded_at_field` for every source.
    ERROR / RUNTIME ERROR.
 5. The trap detector runs and logs any heuristic findings without
    changing the verdict.
-6. The driver dispatcher posts to the configured channel when any
-   breach is `error` or `runtime error`.
-7. The workflow exits with `1` on page-worthy breaches and `0`
-   otherwise.
+6. The driver dispatcher posts to the configured channel whenever the
+   `breaches` list is non-empty — including `warn`-only runs, so
+   on-call sees latency creeping up before it crosses into
+   page-worthy territory.
+7. The workflow exits with `1` only when at least one breach is
+   `error` or `runtime error`; `warn`-only runs exit `0` so the
+   payload is informational, not paging.
 
 **Postconditions**: A canonical breach record exists in the workflow
 log; if a driver is configured and any breach was page-worthy, the
