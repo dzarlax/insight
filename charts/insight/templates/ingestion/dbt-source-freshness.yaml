@@ -160,6 +160,9 @@ spec:
           #   1 — at least one `error` or `runtime error` (page-worthy)
           #   2 — `target/sources.json` missing (dbt crashed before checking)
           # Argo's `failedJobsHistoryLimit` retains the breaching runs.
+          # `set +e` so we keep going to the trap detector even when the
+          # freshness parser exits non-zero (which is the page-worthy case).
+          set +e
           python3 - <<'PY'
           import json, os, sys, urllib.request
 
@@ -238,6 +241,27 @@ spec:
           # printed above and POSTed in the payload for triage.
           sys.exit(1 if any(b["status"] in PAGE_STATUSES for b in breaches) else 0)
           PY
+          freshness_exit=$?
+          set -e
+
+          # Trap detector — runs after the freshness check itself. Catches
+          # bronze sources whose `_airbyte_extracted_at` anchor is masking
+          # a re-emit / incremental-topup pattern (the freshness check
+          # returns PASS even though the upstream has stopped publishing).
+          # Its findings are *warnings*: logged for visibility, but the
+          # workflow's page/no-page decision is owned by the freshness
+          # check itself — we do not override it.
+          set +e
+          python3 /ingestion/scripts/freshness-trap-detect.py /ingestion/connectors
+          trap_exit=$?
+          set -e
+          if [ "$trap_exit" -eq 1 ]; then
+            echo "freshness-trap-detect: found suspect(s) — review the connector schema.yml for those tables (see src/ingestion/MONITORING.md)"
+          elif [ "$trap_exit" -ne 0 ]; then
+            echo "freshness-trap-detect: script error (exit $trap_exit) — not affecting workflow status" >&2
+          fi
+
+          exit "$freshness_exit"
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
