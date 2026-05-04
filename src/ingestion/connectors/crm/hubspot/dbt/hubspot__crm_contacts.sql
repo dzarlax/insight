@@ -18,23 +18,27 @@ SELECT * FROM (
         properties_firstname                            AS first_name,
         properties_lastname                             AS last_name,
         properties_hubspot_owner_id                     AS owner_id,
-        -- HubSpot allows multiple companies per contact; Silver keeps primary.
-        arrayElement(
-            coalesce(associations_companies, []), 1
-        )                                               AS account_id,
+        nullIf(arrayElement(
+            JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1
+        ), '')                                          AS account_id,
         properties_lifecyclestage                       AS lifecycle_stage,
         toJSONString(map(
-            'hs_lead_status',     coalesce(toString(properties_hs_lead_status), ''),
-            'hs_analytics_source',coalesce(toString(properties_hs_analytics_source), ''),
-            'phone',              coalesce(toString(properties_phone), ''),
-            'archived',           toString(coalesce(archived, false))
+            'phone',            coalesce(toString(properties_phone), ''),
+            'city',             coalesce(toString(properties_city), ''),
+            'state',            coalesce(toString(properties_state), ''),
+            'country',          coalesce(toString(properties_country), ''),
+            'jobtitle',         coalesce(toString(properties_jobtitle), ''),
+            'hs_lead_status',   coalesce(toString(properties_hs_lead_status), ''),
+            'hs_analytics_source', coalesce(toString(properties_hs_analytics_source), ''),
+            'archived',         toString(coalesce(archived, false))
         ))                                              AS metadata,
-        custom_fields,
-        parseDateTime64BestEffortOrNull(createdAt, 3)   AS created_at,
-        parseDateTime64BestEffortOrNull(updatedAt, 3)   AS updated_at,
+        CAST(map() AS Map(String, String))              AS custom_str_attrs,
+        CAST(map() AS Map(String, Float64))             AS custom_num_attrs,
+        createdAt                                       AS created_at,
+        updatedAt                                       AS updated_at,
         data_source,
         coalesce(
-            toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(updatedAt, 3)),
+            toUnixTimestamp64Milli(updatedAt),
             0
         )                                               AS _version
     FROM {{ source('bronze_hubspot', 'contacts') }}

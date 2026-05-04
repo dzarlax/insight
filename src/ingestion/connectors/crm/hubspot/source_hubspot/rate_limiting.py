@@ -93,7 +93,11 @@ class HubspotErrorHandler(ErrorHandler):
 
         if isinstance(response, requests.Response):
             if response.ok:
-                return ErrorResolution(ResponseAction.IGNORE, None, None)
+                # SUCCESS, not IGNORE: IGNORE makes the CDK log
+                # "Ignoring response for ..." at INFO on every 2xx, which
+                # spams the log on busy syncs. SUCCESS is the happy-path
+                # value; both let the body through to the parser unchanged.
+                return ErrorResolution(ResponseAction.SUCCESS, None, None)
 
             status = response.status_code
 

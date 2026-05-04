@@ -14,7 +14,7 @@
       "insight_tenant_id": {
         "type": "string",
         "title": "Insight Tenant ID",
-        "description": "Tenant isolation identifier for the ingestion layer.",
+        "description": "Tenant isolation identifier for the ingestion layer. Used as a partition key in Bronze and joined to silver tables.",
         "order": 0
       },
       "insight_source_id": {
@@ -34,13 +34,10 @@
       "hubspot_start_date": {
         "type": "string",
         "title": "Start Date",
-        "description": "UTC start for initial incremental sync. Accepts YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ. Records with updatedAt older than this are skipped on first run. Omit to fall back to 2 years before now.",
-        "anyOf": [
-          { "format": "date-time" },
-          { "format": "date" },
-          { "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
-        ],
-        "examples": ["2024-01-01", "2024-01-01T00:00:00Z"],
+        "description": "UTC start (YYYY-MM-DD) for the initial incremental sync. Records with updatedAt older than this are skipped on first run. Leave blank to fall back to 2 years before now.",
+        "format": "date",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+        "examples": ["2024-01-01"],
         "order": 3
       },
       "hubspot_streams": {
@@ -54,24 +51,26 @@
       "hubspot_stream_slice_step": {
         "type": "string",
         "title": "Stream Slice Step",
-        "description": "ISO-8601 duration for concurrent cursor slice width. Smaller = more parallelism, more API calls. Default P30D (30 days). Shrink to PT1H for large orgs that hit the 10k search-result cap inside a single time slice.",
+        "description": "ISO-8601 duration for concurrent cursor slice width. Smaller = more parallelism, more API calls. Default P30D (30 days). Shrink toward P7D or PT1H if a single time slice exceeds the 10k search-result cap (logs flag 'switching to keyset pagination').",
         "pattern": "^P(?:\\d+[YMWD])+(?:T(?:\\d+[HMS])+)?$|^PT(?:\\d+[HMS])+$",
         "default": "P30D",
+        "examples": ["P30D", "P7D", "P1D", "PT1H"],
         "order": 5
       },
       "hubspot_lookback_window": {
         "type": "string",
         "title": "Lookback Window",
-        "description": "ISO-8601 duration to re-read before the cursor position each sync (accounts for hs_lastmodifieddate eventual consistency on HubSpot Search). Default PT10M.",
+        "description": "ISO-8601 duration to re-read before the cursor position each sync (accounts for hs_lastmodifieddate eventual consistency on HubSpot Search). Default PT10M is sufficient for most portals; bump to PT30M if you observe missed updates on busy portals.",
         "pattern": "^P(?:\\d+[YMWD])+(?:T(?:\\d+[HMS])+)?$|^PT(?:\\d+[HMS])+$",
         "default": "PT10M",
+        "examples": ["PT10M", "PT30M", "PT1H"],
         "order": 6
       },
       "hubspot_num_workers": {
         "type": "integer",
         "title": "Concurrent Workers",
-        "description": "Max concurrent stream slice fetches. Clamped to [1, 50]. Default 20. HubSpot burst limits: 10 rps (standard) or 100 rps (Enterprise); search endpoint caps at 4 rps portal-wide.",
-        "default": 20,
+        "description": "Max concurrent stream slice fetches. Clamped to [1, 50]. Default 4 — matches HubSpot's portal-wide search-endpoint cap (4 rps), which is the binding limit for most CRM streams. Bump to 10 (standard portal app limit) or up to 50 (Enterprise, 100 rps app limit) if you observe sustained throughput well below the cap without 429s.",
+        "default": 4,
         "minimum": 1,
         "maximum": 50,
         "order": 7

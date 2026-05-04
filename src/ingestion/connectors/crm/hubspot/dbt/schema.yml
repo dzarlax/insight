@@ -34,10 +34,6 @@ models:
       - name: source_id
         tests: [not_null]
       - name: unique_key
-        # Uniqueness is enforced by ReplacingMergeTree(_version) at merge
-        # time. A plain dbt `unique` test reads unmerged parts and produces
-        # false-positive duplicates. Relying on engine-level dedup; run
-        # ``OPTIMIZE TABLE ... FINAL`` before auditing.
         tests: [not_null]
       - name: contact_id
         tests: [not_null]

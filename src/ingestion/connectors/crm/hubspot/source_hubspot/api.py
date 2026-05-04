@@ -23,6 +23,7 @@ from airbyte_cdk.utils import AirbyteTracedException
 from source_hubspot.constants import (
     BASE_URL,
     HUBSPOT_TYPE_TO_JSON_SCHEMA,
+    ALLOWED_PROPERTIES_BY_OBJECT,
 )
 from source_hubspot.rate_limiting import HubspotErrorHandler
 
@@ -154,13 +155,26 @@ class Hubspot:
         )
 
     def property_names(self, object_type: str) -> Tuple[str, ...]:
-        """All property names (standard + custom) for ``object_type``.
+        """Curated standard properties + all custom (tenant-defined) properties.
 
-        Used to build the ``properties`` request body on Search calls so we
-        retrieve every field in one round-trip.
+        Standard props outside ``ALLOWED_PROPERTIES_BY_OBJECT[object_type]``
+        are skipped — Silver dbt models only consume a small subset, and a
+        wide search request blows up Bronze schema width and the destination
+        binary-insert buffer (CH OOM). Custom (``hubspotDefined=False``)
+        props pass through untouched and the envelope bundles them into the
+        ``custom_fields`` JSON column.
         """
         props = self.properties_for(object_type)
-        return tuple(p["name"] for p in props if p.get("name"))
+        curated = ALLOWED_PROPERTIES_BY_OBJECT.get(object_type, frozenset())
+        selected = []
+        for p in props:
+            name = p.get("name")
+            if not name:
+                continue
+            if p.get("hubspotDefined") and name not in curated:
+                continue
+            selected.append(name)
+        return tuple(selected)
 
     def generate_schema(self, object_type: str) -> Mapping[str, Any]:
         """Build a JSON schema from the property descriptors.
@@ -181,10 +195,15 @@ class Hubspot:
                 "archived": {"type": ["boolean", "null"]},
             },
         }
+        curated = ALLOWED_PROPERTIES_BY_OBJECT.get(object_type, frozenset())
         warned_unknown: set = set()
         for prop in props:
             name = prop.get("name")
             if not name or not prop.get("hubspotDefined"):
+                continue
+            if name not in curated:
+                # Standard property outside the allowlist — not fetched by
+                # property_names(), so don't advertise its column either.
                 continue
             schema["properties"][f"properties_{name}"] = _prop_to_json_schema(
                 prop, warned_unknown

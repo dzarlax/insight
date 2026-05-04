@@ -30,11 +30,11 @@ SELECT * FROM (
             'archived',          toString(coalesce(archived, false))
         ))                                              AS metadata,
         custom_fields,
-        parseDateTime64BestEffortOrNull(createdAt, 3)   AS created_at,
-        parseDateTime64BestEffortOrNull(updatedAt, 3)   AS updated_at,
+        createdAt   AS created_at,
+        updatedAt   AS updated_at,
         data_source,
         coalesce(
-            toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(updatedAt, 3)),
+            toUnixTimestamp64Milli(updatedAt),
             0
         )                                               AS _version
     FROM {{ source('bronze_hubspot', 'companies') }}

@@ -22,9 +22,9 @@ SELECT * FROM (
         toFloat64OrNull(properties_amount)              AS amount,
         toDateOrNull(properties_closedate)              AS close_date,
         properties_hubspot_owner_id                     AS owner_id,
-        arrayElement(
-            coalesce(associations_companies, []), 1
-        )                                               AS account_id,
+        nullIf(arrayElement(
+            JSONExtract(coalesce(associations_companies, '[]'), 'Array(String)'), 1
+        ), '')                                          AS account_id,
         toInt64(coalesce(properties_hs_is_closed, 'false') = 'true')     AS is_closed,
         toInt64(coalesce(properties_hs_is_closed_won, 'false') = 'true') AS is_won,
         properties_hs_analytics_source                  AS lead_source,
@@ -35,11 +35,11 @@ SELECT * FROM (
             'archived',       toString(coalesce(archived, false))
         ))                                              AS metadata,
         custom_fields,
-        parseDateTime64BestEffortOrNull(createdAt, 3)   AS created_at,
-        parseDateTime64BestEffortOrNull(updatedAt, 3)   AS updated_at,
+        createdAt                                       AS created_at,
+        updatedAt                                       AS updated_at,
         data_source,
         coalesce(
-            toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(updatedAt, 3)),
+            toUnixTimestamp64Milli(updatedAt),
             0
         )                                               AS _version
     FROM {{ source('bronze_hubspot', 'deals') }}

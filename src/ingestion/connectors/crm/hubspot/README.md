@@ -63,7 +63,7 @@ Active by default: **10 streams** — 8 feed Silver (`class_crm_*`), 2 are bronz
 
 | Stream | Silver target | Cursor | PK |
 |---|---|---|---|
-| `contacts` | `class_crm_contacts` | `updatedAt` (filtered on `hs_lastmodifieddate`) | `id` |
+| `contacts` | `class_crm_contacts` | full_refresh | `id` |
 | `companies` | `class_crm_accounts` | `updatedAt` | `id` |
 | `deals` | `class_crm_deals` | `updatedAt` | `id` |
 | `engagements_calls` | `class_crm_activities` | `updatedAt` | `id` |
@@ -97,6 +97,8 @@ HubSpot's CRM Search endpoint caps at `after = 10,000`. The connector paginates 
 
 ### Deleted / archived records
 `hubspot_include_archived=true` (default) runs a second pass per object with `archived=true` so soft-deleted records land in Bronze carrying `archived: true`. Silver models expose this through the `metadata` JSON column.
+
+The archived pass uses GET `/crm/v3/objects/{type}?properties=...` and only requests the curated standard properties (`ALLOWED_PROPERTIES_BY_OBJECT`) to keep the URL short — passing every custom property in the query string overflows HTTP 414 on portals with hundreds of custom contact/deal properties. Custom fields are not populated for archived records as a result; that's acceptable since archived = soft-deleted.
 
 ## Local development
 

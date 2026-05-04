@@ -54,7 +54,7 @@ from source_hubspot.streams import CrmSearchStream, HubspotStream, OwnersStream
 
 logger = logging.getLogger("airbyte")
 
-_DEFAULT_CONCURRENCY = 20
+_DEFAULT_CONCURRENCY = 4
 _MAX_CONCURRENCY = 50
 _DEFAULT_LOOKBACK = timedelta(minutes=10)
 _DEFAULT_SLICE_STEP = timedelta(days=30)

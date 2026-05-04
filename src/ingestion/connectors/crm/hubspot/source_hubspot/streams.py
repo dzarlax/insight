@@ -35,6 +35,7 @@ from airbyte_cdk.sources.streams.http import HttpClient
 from source_hubspot.api import Hubspot
 from source_hubspot.associations import AssociationFetcher
 from source_hubspot.constants import (
+    ALLOWED_PROPERTIES_BY_OBJECT,
     BASE_URL,
     LIST_PAGE_LIMIT,
     SEARCH_AFTER_HARD_CAP,
@@ -131,6 +132,24 @@ class HubspotStream(Stream, ABC):
 
     def set_cursor(self, cursor: ConcurrentCursor) -> None:
         self._cursor = cursor
+
+    def stream_slices(
+        self,
+        sync_mode: SyncMode,
+        cursor_field: Optional[List[str]] = None,
+        stream_state: Optional[Mapping[str, Any]] = None,
+    ) -> Iterable[Optional[Mapping[str, Any]]]:
+        # Bridge legacy Stream.stream_slices to the ConcurrentCursor.
+        # Without this, CDK's StreamPartitionGenerator iterates the base
+        # Stream default (`yield None`), wraps each partition with _slice=None,
+        # and ConcurrentCursor.close_partition then fails with
+        # `KeyError: 'Partition is expected to have key start_date'`.
+        # Owners (cursor_field=None → FinalStateCursor → set_cursor never
+        # called) keeps the legacy behaviour.
+        if self._cursor is None:
+            yield None
+            return
+        yield from self._cursor.stream_slices()
 
     def get_json_schema(self) -> Mapping[str, Any]:
         """Advertise per-stream schema to the destination.
@@ -391,7 +410,11 @@ class CrmSearchStream(HubspotStream):
         in :meth:`_generate_records`.
         """
         url = self._list_url()
-        properties_param = ",".join(self._hubspot.property_names(self._object_type))
+        # Use only curated standard properties — custom props go in the URL query
+        # string and cause HTTP 414 on portals with many custom properties.
+        # Custom fields are not populated for archived records; that's acceptable.
+        curated = ALLOWED_PROPERTIES_BY_OBJECT.get(self._object_type, frozenset())
+        properties_param = ",".join(sorted(curated))
         after: Optional[str] = None
         while True:
             params: MutableMapping[str, Any] = {

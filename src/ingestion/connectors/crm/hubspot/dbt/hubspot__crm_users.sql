@@ -31,7 +31,7 @@ SELECT * FROM (
         collected_at,
         data_source,
         coalesce(
-            toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(updatedAt, 3)),
+            toUnixTimestamp64Milli(updatedAt),
             0
         )                                               AS _version
     FROM {{ source('bronze_hubspot', 'owners') }}
