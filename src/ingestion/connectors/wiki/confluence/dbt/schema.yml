@@ -3,17 +3,28 @@ version: 2
 sources:
   - name: bronze_confluence
     schema: bronze_confluence
-    # Freshness window (30h warn / 48h error) is inherited from the
-    # project-level `+freshness` block in `src/ingestion/dbt/dbt_project.yml`.
-    # `loaded_at_field` must be declared per source — dbt does not propagate
-    # it from the project file. `wiki_spaces` is exempt — spaces are
-    # created/archived rarely, no new rows on a typical day.
+    # Confluence connector re-fetches every page version on each run, so old
+    # rows get a fresh `_airbyte_extracted_at` even when no new edits land —
+    # anchoring on extracted-at would silently mask an upstream stop.
+    # `wiki_page_versions` therefore anchors on its own `created_at` (the
+    # version's edit timestamp).
+    #
+    # Threshold uses the "event" tier (`freshness_warn_event_h` /
+    # `freshness_error_event_h` — 72h / 96h by default, Helm-tunable):
+    # edits are event-style and a quiet team can legitimately have zero new
+    # versions across a long weekend. The wider window absorbs Monday-
+    # morning false positives while still catching a real 4-day stop.
     loaded_at_field: _airbyte_extracted_at
+    freshness:
+      warn_after:  { count: "{{ env_var('FRESHNESS_WARN_EVENT_H',  '72') | int }}", period: hour }
+      error_after: { count: "{{ env_var('FRESHNESS_ERROR_EVENT_H', '96') | int }}", period: hour }
     tables:
       - name: wiki_spaces
-        freshness: null
+        freshness: null  # roster — created/archived rarely
       - name: wiki_pages
+        freshness: null  # roster (page lifecycle, not daily activity signal)
       - name: wiki_page_versions
+        loaded_at_field: parseDateTime64BestEffortOrNull(created_at, 3)
 
   # bronze_jira.jira_user is declared by the Jira connector
   # (connectors/task-tracking/jira/dbt/schema.yml). Staging models below

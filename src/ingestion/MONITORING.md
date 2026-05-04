@@ -25,15 +25,62 @@ sources:
       error_after: { count: 48, period: hour }
 ```
 
-Each source's `schema.yml` then declares the field to check:
+Each source's `schema.yml` then declares the field to check. The right
+choice depends on whether the connector is **streaming** or
+**report-style**:
 
 ```yaml
+# Streaming connector — Airbyte cursor follows business time. Rows land in
+# bronze approximately when they happen, so the technical extracted-at
+# timestamp tracks reality.
 sources:
   - name: bronze_<connector>
     schema: bronze_<connector>
     loaded_at_field: _airbyte_extracted_at
     tables: ...
 ```
+
+```yaml
+# Report-style connector — Airbyte re-fetches a fixed window every run
+# (e.g. Microsoft Graph reports, Slack admin.analytics.getFile). Even when
+# the upstream has not advanced, the sync writes "fresh" rows for older
+# business days, so `_airbyte_extracted_at` stays green forever. Anchor on
+# the report's own business-day column instead. ISO-8601 strings sort
+# lexically, so wrapping in `parseDateTimeBestEffortOrNull(...)` works
+# directly inside `loaded_at_field`.
+sources:
+  - name: bronze_<connector>
+    schema: bronze_<connector>
+    loaded_at_field: parseDateTimeBestEffortOrNull(reportRefreshDate)
+    tables: ...
+```
+
+Active per-source assignments. Threshold tier ("default" = 30h/48h, "event"
+= 72h/96h) is set in the same `schema.yml` block; values are
+Helm-controlled via `ingestion.freshness.thresholds.*` (envvar fallthrough
+keeps local `dbt source freshness` working without Helm rendering).
+
+| Source / table | `loaded_at_field` | Tier | Notes |
+|---|---|---|---|
+| bronze_bamboohr (employees) | `_airbyte_extracted_at` | default | Full-refresh roster — sync-alive signal |
+| bronze_bitbucket_cloud.* | `_airbyte_extracted_at` | default | Mostly incremental (insert-on-event) |
+| bronze_claude_admin.* | `_airbyte_extracted_at` | default | |
+| bronze_claude_enterprise.* | `_airbyte_extracted_at` | default | |
+| bronze_confluence.wiki_page_versions | `parseDateTime64BestEffortOrNull(created_at, 3)` | **event** | Connector re-emits version table; quiet weekends real |
+| bronze_cursor.cursor_daily_usage | `fromUnixTimestamp64Milli(toInt64OrZero(toString(date)))` | default | Daily aggregate; weekend rows still emitted |
+| bronze_cursor (other tables) | `_airbyte_extracted_at` | default | |
+| bronze_github.* | `_airbyte_extracted_at` | default | |
+| bronze_jira.* | `_airbyte_extracted_at` | default | Event-style streams (incremental cursor) |
+| bronze_m365.{teams,email,onedrive,sharepoint}_activity | `parseDateTimeBestEffortOrNull(reportRefreshDate)` | default | Report-style (Microsoft Graph reports) — but Microsoft publishes daily incl weekends |
+| bronze_openai.* | `_airbyte_extracted_at` | default | |
+| bronze_slack.users_details | `parseDateTimeBestEffortOrNull(date)` | default | Report-style (Slack admin.analytics.getFile) — daily incl weekends |
+| bronze_zoom.meetings | `parseDateTimeBestEffortOrNull(start_time)` | **event** | Re-fetches 30-day window; quiet weekends real |
+| bronze_zoom.participants | `parseDateTimeBestEffortOrNull(join_time)` | **event** | |
+| bronze_zoom.users | (opted out via `freshness: null`) | — | Roster |
+
+Re-categorizing a connector across tiers is an engineering change (it
+usually comes with a `loaded_at_field` revisit), not an ops dial — that's
+why the mapping lives in connector `schema.yml`, not in Helm values.
 
 `loaded_at_field` is a dbt **property**, not a config — `+loaded_at_field`
 at project level is silently ignored. The dbt-clickhouse adapter does not

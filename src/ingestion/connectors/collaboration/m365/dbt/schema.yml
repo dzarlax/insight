@@ -3,7 +3,13 @@ version: 2
 sources:
   - name: bronze_m365
     schema: bronze_m365
-    loaded_at_field: _airbyte_extracted_at
+    # Microsoft Graph reports endpoints are *report-style* — Airbyte runs
+    # daily and re-fetches yesterday's snapshot regardless of whether the
+    # upstream report has actually advanced. `_airbyte_extracted_at` would
+    # therefore always look fresh even if Microsoft hasn't published a new
+    # day in 4 days. Anchor freshness on `reportRefreshDate` (the business
+    # day the row describes) instead. ISO-8601 strings sort lexically.
+    loaded_at_field: parseDateTimeBestEffortOrNull(reportRefreshDate)
     tables:
       - name: email_activity
       - name: teams_activity

@@ -22,7 +22,26 @@
           }
         },
         "toolboxImage":    { "type": "string" },
-        "jiraEnrichImage": { "type": "string" }
+        "jiraEnrichImage": { "type": "string" },
+        "freshness": {
+          "type": "object",
+          "properties": {
+            "enabled":               { "type": "boolean" },
+            "schedule":              { "type": "string" },
+            "dbtSelect":             { "type": "string" },
+            "cluster":               { "type": "string" },
+            "notificationWebhookUrl":{ "type": "string" },
+            "thresholds": {
+              "type": "object",
+              "properties": {
+                "defaultWarnHours":  { "type": "integer", "minimum": 1 },
+                "defaultErrorHours": { "type": "integer", "minimum": 1 },
+                "eventWarnHours":    { "type": "integer", "minimum": 1 },
+                "eventErrorHours":   { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
       }
     },
 

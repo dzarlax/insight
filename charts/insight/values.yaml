@@ -140,9 +140,10 @@ ingestion:
 
   # ─── Bronze freshness monitoring ───────────────────────────────────────
   # Single CronWorkflow runs `dbt source freshness` against every bronze
-  # source declared in `src/ingestion/dbt/...`. SLA defaults (loaded_at_field,
-  # warn/error windows) live in `src/ingestion/dbt/dbt_project.yml`; per-table
-  # opt-outs live in connector schema.yml files.
+  # source declared in `src/ingestion/dbt/...`. The connector→tier mapping
+  # (which sources count as "event" vs "default") lives in each connector's
+  # `schema.yml` — it is an engineering choice tied to the source shape and
+  # `loaded_at_field`, not an ops dial. The numbers below are the dial.
   freshness:
     enabled: true
     # Cron expression for the freshness check. Daily at 13:00 UTC sits past
@@ -152,6 +153,22 @@ ingestion:
     # source (incl. `staging_jira` — those have no `freshness:` block so dbt
     # skips them). Narrow this for smoke-testing in dev.
     dbtSelect: "source:*"
+    # SLA threshold tiers. Passed to `dbt source freshness --vars` so dbt
+    # picks them up via `var('freshness_*_h')` references in
+    # `src/ingestion/dbt/dbt_project.yml` and connector `schema.yml`.
+    thresholds:
+      # "default" tier — daily-cadence sources where weekend rows still
+      # exist (M365 / Slack / Cursor reports, plus any source anchored on
+      # `_airbyte_extracted_at`). 30h warn / 48h error gives ~6h grace
+      # past the 24h cron cycle.
+      defaultWarnHours: 30
+      defaultErrorHours: 48
+      # "event" tier — sources whose business activity has natural quiet
+      # days (Confluence edits, Zoom meetings, Bitbucket commits, etc.).
+      # 72h / 96h absorbs long weekends and short holidays without hiding
+      # a real upstream stop.
+      eventWarnHours: 72
+      eventErrorHours: 96
     # Identifies the deployment in notification payloads (e.g. "prod",
     # "staging", "tenant-acme"). Empty = single-deployment install.
     cluster: ""

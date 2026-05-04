@@ -3,13 +3,21 @@ version: 2
 sources:
   - name: bronze_cursor
     schema: bronze_cursor
+    # Default: streaming/event tables anchor on `_airbyte_extracted_at`.
+    # `cursor_daily_usage` is overridden below to anchor on its own business
+    # date because it is report-style — Airbyte re-fetches the last ~30 days
+    # every run, so `_airbyte_extracted_at` stays fresh even when the API
+    # has stopped publishing new days.
     loaded_at_field: _airbyte_extracted_at
     tables:
       - name: cursor_members
+        freshness: null  # roster — full-refresh, no daily-cadence expectation
       - name: cursor_audit_logs
       - name: cursor_usage_events
       - name: cursor_usage_events_daily_resync
+        freshness: null  # 100% subset of cursor_usage_events — see #261
       - name: cursor_daily_usage
+        loaded_at_field: fromUnixTimestamp64Milli(toInt64OrZero(toString(date)))
 
 models:
   - name: cursor__ai_dev_usage

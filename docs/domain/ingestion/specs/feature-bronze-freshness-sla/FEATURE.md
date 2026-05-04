@@ -45,7 +45,7 @@ connector inherits the SLA the moment it declares its bronze source.
 - Operational runbook: [`src/ingestion/MONITORING.md`](../../../../src/ingestion/MONITORING.md) — verification steps, on-call matrix, parser exit codes, payload shape
 - Workflow template: [`charts/insight/templates/ingestion/dbt-source-freshness.yaml`](../../../../charts/insight/templates/ingestion/dbt-source-freshness.yaml)
 - Threshold config: [`src/ingestion/dbt/dbt_project.yml`](../../../../src/ingestion/dbt/dbt_project.yml) — project-level `+freshness`
-- Per-source declarations: every connector's `dbt/schema.yml` carries `loaded_at_field: _airbyte_extracted_at` at source level (dbt does not propagate this property from project config)
+- Per-source declarations: every connector's `dbt/schema.yml` carries `loaded_at_field` at source level (dbt does not propagate this property from project config). Streaming connectors anchor on `_airbyte_extracted_at`; report-style connectors (M365 Graph reports, Slack admin.analytics) anchor on the report's own business-day column wrapped in `parseDateTimeBestEffortOrNull(...)`
 
 ## 2. Design
 
@@ -65,6 +65,30 @@ the project. `loaded_at_field` is a *property*, not a config, so it must be
 declared at source level in every connector's `schema.yml`. The
 dbt-clickhouse adapter does not support metadata-based freshness — a missing
 `loaded_at_field` produces a `runtime error` rather than a sensible default.
+
+#### Streaming vs report-style choice
+
+The choice of `loaded_at_field` is **not** uniform across connectors. Two
+patterns exist:
+
+- **Streaming / full-refresh sources** (Jira, Bitbucket, Cursor daily_usage,
+  Confluence, Zoom, BambooHR, etc.) — Airbyte's cursor follows business
+  time. Rows land in bronze approximately when they happen, so
+  `_airbyte_extracted_at` tracks reality. Use `_airbyte_extracted_at`.
+- **Report-style sources** (M365 Graph reports, Slack
+  admin.analytics.getFile) — Airbyte re-fetches a fixed daily window every
+  run. If the upstream stops publishing new days,
+  `_airbyte_extracted_at` keeps advancing because the connector still
+  writes "fresh" rows for older business days. Anchor on the report's
+  business-day column instead, e.g.
+  `parseDateTimeBestEffortOrNull(reportRefreshDate)` for Microsoft Graph,
+  `parseDateTimeBestEffortOrNull(date)` for Slack analytics.
+
+The local CH dump on 2026-05-04 has the canonical evidence: M365 returned
+no new days for 4 days but its sync ran nightly, so `_airbyte_extracted_at`
+was 9h old (PASS) while the latest `reportRefreshDate` was 96h old (ERROR).
+Slack analytics had the same shape with a 3-day gap. Without the
+report-style anchor, both ran silent.
 
 ### 2.2 Per-table opt-out
 

@@ -55,6 +55,19 @@ spec:
           # candidate — see src/ingestion/MONITORING.md for the contract.
           - name: notification_webhook_url
             value: ""
+          # SLA threshold tiers. Picked up by dbt via `--vars` and
+          # referenced in `src/ingestion/dbt/dbt_project.yml` and connector
+          # `schema.yml` files via `var('freshness_*_h')`. The
+          # connector→tier mapping is in connector schema.yml — these knobs
+          # only tune the values, not which source falls in which tier.
+          - name: warn_default_h
+            value: "30"
+          - name: error_default_h
+            value: "48"
+          - name: warn_event_h
+            value: "72"
+          - name: error_event_h
+            value: "96"
       # 20 min: dbt source freshness issues one CH query per source. With
       # the current connector set this finishes in ~2 min; the headroom
       # is for connector growth and CH cold-start cases.
@@ -81,6 +94,16 @@ spec:
             value: {{ `"{{inputs.parameters.cluster}}"` }}
           - name: NOTIFICATION_WEBHOOK_URL
             value: {{ `"{{inputs.parameters.notification_webhook_url}}"` }}
+          # SLA threshold env vars consumed by `env_var(..., default)` in
+          # `src/ingestion/dbt/dbt_project.yml` and connector schema.yml.
+          - name: FRESHNESS_WARN_DEFAULT_H
+            value: {{ `"{{inputs.parameters.warn_default_h}}"` }}
+          - name: FRESHNESS_ERROR_DEFAULT_H
+            value: {{ `"{{inputs.parameters.error_default_h}}"` }}
+          - name: FRESHNESS_WARN_EVENT_H
+            value: {{ `"{{inputs.parameters.warn_event_h}}"` }}
+          - name: FRESHNESS_ERROR_EVENT_H
+            value: {{ `"{{inputs.parameters.error_event_h}}"` }}
         source: |
           # SECURITY: every parameter reaches us via env vars only — no
           # interpolation into shell or YAML source. Same convention as
@@ -126,6 +149,8 @@ spec:
           # SLA. We swallow the exit code here and re-derive the workflow
           # outcome from `target/sources.json` below — dbt does not
           # distinguish warn from error in its exit code, but we want to.
+          # SLA thresholds are read by dbt via `env_var(...)` in
+          # `dbt_project.yml` / schema.yml — already exported above.
           set +e
           dbt source freshness --profiles-dir . --select "$DBT_SELECT"
           set -e
@@ -254,4 +279,12 @@ spec:
                     value: {{ .Values.ingestion.freshness.cluster | quote }}
                   - name: notification_webhook_url
                     value: {{ .Values.ingestion.freshness.notificationWebhookUrl | quote }}
+                  - name: warn_default_h
+                    value: {{ .Values.ingestion.freshness.thresholds.defaultWarnHours | quote }}
+                  - name: error_default_h
+                    value: {{ .Values.ingestion.freshness.thresholds.defaultErrorHours | quote }}
+                  - name: warn_event_h
+                    value: {{ .Values.ingestion.freshness.thresholds.eventWarnHours | quote }}
+                  - name: error_event_h
+                    value: {{ .Values.ingestion.freshness.thresholds.eventErrorHours | quote }}
 {{- end }}

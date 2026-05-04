@@ -3,11 +3,28 @@ version: 2
 sources:
   - name: bronze_zoom
     schema: bronze_zoom
+    # Zoom Dashboard API returns a rolling ~30-day window every run, so the
+    # connector overwrites `_airbyte_extracted_at` on every existing row
+    # nightly — anchoring on extracted-at masks a silent upstream stop.
+    # `meetings` and `participants` therefore anchor on their own event
+    # timestamps (`start_time` / `join_time`).
+    #
+    # Threshold uses the "event" tier (`freshness_warn_event_h` /
+    # `freshness_error_event_h` — 72h / 96h by default, Helm-tunable):
+    # weekend / holiday with zero meetings is normal, broader window
+    # absorbs Mon-morning false positives while still catching a real
+    # 4-day stop.
     loaded_at_field: _airbyte_extracted_at
+    freshness:
+      warn_after:  { count: "{{ env_var('FRESHNESS_WARN_EVENT_H',  '72') | int }}", period: hour }
+      error_after: { count: "{{ env_var('FRESHNESS_ERROR_EVENT_H', '96') | int }}", period: hour }
     tables:
       - name: users
+        freshness: null  # roster — Zoom account list, not a daily activity signal
       - name: meetings
+        loaded_at_field: parseDateTimeBestEffortOrNull(start_time)
       - name: participants
+        loaded_at_field: parseDateTimeBestEffortOrNull(join_time)
 
 models:
   - name: zoom__collab_meeting_activity
