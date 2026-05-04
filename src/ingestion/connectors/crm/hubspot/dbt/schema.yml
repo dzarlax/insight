@@ -10,12 +10,22 @@ version: 2
 sources:
   - name: bronze_hubspot
     schema: bronze_hubspot
+    # All streams except `owners` are incremental on the HubSpot
+    # `hs_lastmodifieddate` / `updatedAt` cursor — Airbyte writes a row
+    # only when the source object actually advanced, so
+    # `_airbyte_extracted_at` follows business time. Default tier
+    # (30h warn / 48h error) inherited from project-level `+freshness`.
+    # `owners` is a full-refresh roster and is opted out per-table.
+    loaded_at_field: _airbyte_extracted_at
     tables:
       # Core CRM entities feeding Silver
       - name: contacts
       - name: companies
       - name: deals
       - name: owners
+        freshness: null
+        meta:
+          freshness_optout_reason: "roster — full-refresh sales-team list, no daily-cadence expectation"
       # Engagements (activities)
       - name: engagements_calls
       - name: engagements_emails
