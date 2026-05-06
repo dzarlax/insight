@@ -27,3 +27,20 @@ clean-targets:
 # keeps connector-specific table lists co-located with the connector code.
 on-run-start:
   - "{{ create_task_field_history_staging() }}"
+
+# Project-wide pre_hook: drop init.sh-created silver placeholders (if
+# marker + zero rows) before the incremental materialization rebuilds
+# the table with the real model schema. Bridges the placeholder
+# convention from ADR-0007.
+#
+# The hook is safe to apply to every model: `drop_placeholder_if_present`
+# is a no-op for any table whose system.tables row does not match the
+# `INSIGHT_PLACEHOLDER_v1` comment + 0 rows signature, which is true
+# for every non-silver-placeholder table (bronze/staging models, real
+# silver tables that already have data, etc.). See
+# src/ingestion/dbt/macros/drop_placeholder_if_present.sql for the
+# detection logic and removal plan.
+models:
+  ingestion:
+    +pre-hook:
+      - "{{ drop_placeholder_if_present(this) }}"

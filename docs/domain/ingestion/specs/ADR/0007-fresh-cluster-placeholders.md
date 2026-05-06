@@ -59,14 +59,28 @@ Rules for the placeholder:
    the eventually-built table.
 3. **Idempotent** — guarded with `ch_table_exists` so re-runs of
    `init.sh` are safe.
-4. **Replaced on first real run.** Airbyte (for bronze) and dbt (for
-   silver) drop the placeholder and recreate with the real schema.
-   ClickHouse rebinds VIEW resolution on each SELECT, so the table
-   replacement is invisible to consumers.
+4. **Replaced on first real run.**
+   - **Bronze placeholders** are dropped and recreated by Airbyte's
+     destination on the first sync — Airbyte's connector contract owns
+     the bronze schema and overwrites whatever the placeholder shipped.
+   - **Silver placeholders** are *not* automatically replaced by dbt's
+     incremental materialization (which `INSERT INTO`s an existing
+     relation). To force replacement on the first real dbt run, every
+     silver placeholder is created with the table comment
+     `INSIGHT_PLACEHOLDER_v1`, and the project-level pre_hook
+     `drop_placeholder_if_present` (in
+     `src/ingestion/dbt/macros/drop_placeholder_if_present.sql`) drops
+     any table that matches the marker AND has zero rows. dbt's
+     incremental materialization then sees no existing relation and
+     creates the table with the model's full schema, engine, and
+     ORDER BY.
+   - ClickHouse rebinds VIEW resolution on each SELECT, so the
+     replacement is invisible to gold-view consumers.
 
 When adding a NEW migration that references a NEW silver / bronze
 table, the migration author MUST also extend `create-bronze-placeholders.sh`
-with a placeholder for that table.
+with a placeholder for that table. Silver placeholders MUST end with
+`COMMENT 'INSIGHT_PLACEHOLDER_v1'` so the drop hook can pick them up.
 
 ## Consequences
 
@@ -82,7 +96,13 @@ with a placeholder for that table.
 - The placeholder schema **drifts** from the dbt-model / Airbyte
   schema between PRs. If a placeholder is missing a column the new
   migration references, the install fails until someone extends the
-  placeholder. Detection is live-test: there is no static check.
+  placeholder. Detection is live-test: there is no static check. The
+  silver `drop_placeholder_if_present` pre_hook mitigates one branch
+  of this — schema mismatch between placeholder and dbt staging output
+  no longer corrupts silver writes, because the placeholder is dropped
+  before the first real INSERT — but it does not detect a placeholder
+  missing a column the migration's gold-view SELECT references at
+  init.sh time.
 - The placeholder list **grows monotonically**. As migrations
   accumulate, so does the list. There is no automatic cleanup when a
   migration is removed.
@@ -104,6 +124,12 @@ follow-ups are possible:
 Either follow-up is significantly larger than the placeholder
 convention and was deliberately deferred so the bring-up path could
 be unblocked without committing to an architectural redesign.
+
+When the first follow-up lands, the silver placeholder blocks in
+`scripts/create-bronze-placeholders.sh` AND the
+`drop_placeholder_if_present` macro + project-level pre_hook MUST be
+removed in the same PR — the comment markers and the dbt-side drop
+become dead code once silver tables are no longer pre-stubbed.
 
 ## References
 

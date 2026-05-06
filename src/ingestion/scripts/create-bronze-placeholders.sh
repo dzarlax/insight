@@ -63,7 +63,19 @@ SQL
 # ---------------------------------------------------------------------------
 # silver.* dbt-model placeholders
 # ---------------------------------------------------------------------------
-
+#
+# Each silver placeholder carries `COMMENT 'INSIGHT_PLACEHOLDER_v1'` so the
+# dbt `drop_placeholder_if_present` macro (see
+# src/ingestion/dbt/macros/drop_placeholder_if_present.sql) can detect and
+# drop it on the first real dbt run before the silver model rebuilds the
+# table with its full schema. This is the bridge that keeps placeholder
+# schema drift from corrupting silver writes.
+#
+# The marker + the macro can be retired once gold-view migrations are
+# split into a post-dbt phase (Variant A in ADR-0007's "Better fixes"
+# section) — at that point silver tables will be created exclusively by
+# dbt, never as init.sh stubs.
+#
 # silver.class_comms_events — gold-views (gold-views.sql) references this
 if ! ch_table_exists silver class_comms_events; then
   echo "  Creating placeholder: silver.class_comms_events"
@@ -74,7 +86,7 @@ CREATE TABLE IF NOT EXISTS silver.class_comms_events (
     emails_sent   Float64,
     source        String,
     _version      UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (user_email, activity_date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (user_email, activity_date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -94,7 +106,7 @@ CREATE TABLE IF NOT EXISTS silver.class_focus_metrics (
     focus_time_pct        Float64,
     dev_time_h            Float64,
     _version              UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -112,7 +124,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_email_activity (
     received_count    Float64,
     read_count        Float64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -133,7 +145,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_meeting_activity (
     video_duration_seconds         Float64,
     screen_share_duration_seconds  Float64,
     _version                       UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -151,7 +163,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_chat_activity (
     channel_messages_posted_count Float64,
     channel_posts                 Float64,
     _version                      UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -169,7 +181,7 @@ CREATE TABLE IF NOT EXISTS silver.class_collab_document_activity (
     shared_externally_count  Float64,
     viewed_or_edited_count   Float64,
     _version                 UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -196,7 +208,7 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage (
     session_count        Nullable(Float64),
     total_chat_messages  Nullable(Float64),
     _version             UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (email, day) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -229,7 +241,7 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_api_usage (
     data_source           String,
     collected_at          Nullable(DateTime64(3)),
     _version              UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -268,7 +280,7 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_assistant_usage (
     data_source              String,
     collected_at             Nullable(DateTime64(3)),
     _version                 UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key;
+) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -285,7 +297,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits (
     date              Date,
     is_merge_commit   UInt8,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -302,7 +314,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests (
     created_on        DateTime,
     merged_on         Nullable(DateTime),
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (pr_id);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (pr_id) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -319,7 +331,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes (
     lines_added       Int64,
     lines_removed     Int64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash, file_path);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (commit_hash, file_path) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -334,7 +346,7 @@ CREATE TABLE IF NOT EXISTS silver.class_task_daily (
     tasks_closed      Float64,
     bugs_fixed        Float64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_id, metric_date);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_id, metric_date) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -350,7 +362,7 @@ CREATE TABLE IF NOT EXISTS silver.class_task_field_history (
     new_value         String,
     changed_at        DateTime,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (issue_id, changed_at);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (issue_id, changed_at) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -368,7 +380,7 @@ CREATE TABLE IF NOT EXISTS silver.mtr_git_person_totals (
     prs_merged           Float64,
     avg_pr_cycle_time_h  Nullable(Float64),
     _version             UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
@@ -385,7 +397,7 @@ CREATE TABLE IF NOT EXISTS silver.mtr_git_person_weekly (
     lines_removed     Int64,
     prs_merged        Float64,
     _version          UInt64
-) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, week);
+) ENGINE = ReplacingMergeTree(_version) ORDER BY (person_key, week) COMMENT 'INSIGHT_PLACEHOLDER_v1';
 SQL
 fi
 
