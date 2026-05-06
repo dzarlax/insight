@@ -34,7 +34,8 @@ Rules compose them via a small predicate library: `function_eligible(F)`, `funct
 | What we depend on | Status |
 |---|---|
 | Email-keyed person resolution | Works (BambooHR + Cursor emit `email`) |
-| Reviewer/git-host alias resolution | **Missing** — no connector emits `github_login` / `bitbucket_display_name` / `slack_user_id`; review-side rules blocked |
+| Reviewer/git-host alias resolution | **Missing** — no connector emits `github_login` / `bitbucket_display_name`; review-side rules blocked |
+| Slack data shape | **Admin-counters only** — Slack admin API returns per-user daily activity (`messages_posted_count`, calls, huddles, activity flags) plus `email_address`; no messages, channels, channel membership, or `tz`. `bronze_slack.users` / `channels` / `messages` are empty. Resolution to `person_id` via email only |
 | `person_assignments` (org-chart) | **No code, no owner** — F4a is hard-blocked |
 | Person-domain override API | **No code** — overrides happen via dbt seeds |
 | BambooHR custom-fields ingestion (Map → typed silver) | **Flat** today; I-E.1 is real implementation work |
@@ -60,7 +61,8 @@ This doc **extends** existing Insight domain specs, not replaces them. Where a c
 
 *   `identity-resolution` — **Tables exist; alias coverage incomplete; author/reviewer bridge structurally absent.**
     *   **Tables shipped:** `persons` + `account_person_map` (MariaDB, `insight/src/backend/services/identity/src/migration/m20260421_000001_persons.rs`); `identity.aliases` + `person.persons` (ClickHouse, `insight/src/ingestion/scripts/migrations/20260408000000_init-identity.sql`). Stable `person_id` (UUIDv7) achieved.
-    *   **`value_type`s emitted today:** BambooHR (`email`, `employee_id`, `display_name`); Cursor (`email`, `id`, `display_name`). **Not found in code:** `github_login`, `bitbucket_display_name`, `slack_user_id`. This means review-side metrics (§2.1) and Slack-derived team detection (§3.2) cannot resolve to `person_id` today — the gap is **alias emission per connector**, not a missing bridge service.
+    *   **`value_type`s emitted today:** BambooHR (`email`, `employee_id`, `display_name`); Cursor (`email`, `id`, `display_name`). **Not found in code:** `github_login`, `bitbucket_display_name`. For Slack the situation is different (see next bullet).
+    *   **Slack data shape — admin-counters only.** Direct query of `bronze_slack` shows `users` / `channels` / `messages` tables are present in schema but empty (0 rows); the only populated Slack table is `users_details`, which is per-user daily activity from Slack's admin API: `messages_posted_count`, `channel_messages_posted_count`, `total_calls_count`, `slack_huddles_count`, activity flags, and crucially `email_address`. There is **no message stream, no channel list, no channel membership data, no user roster, no `tz`**. Resolution from Slack to `person_id` therefore goes via `users_details.email_address` (which works through BambooHR), not via `slack_user_id` aliases. The earlier framing of `slack_user_id` as "missing alias emission" is wrong — even if the connector emitted it, there is no upstream data to bind it against. Slack-derived team detection from channel membership (§3.2) is **not feasible** with the current Slack admin-API access.
     *   **`author_person_id` field exists** (m20260421_000001_persons.rs:98–101) but is not populated anywhere in current ingestion. So even when a git-host alias eventually lands, there is no code path that links a review observation to its author's golden record.
 *   `person` — **ClickHouse table only (not Rust service); manual override = dbt seed PR.**
     *   `person.persons` is a ClickHouse table materialized from dbt seeds (`seed_persons_from_cursor.sql`, `seed_persons_from_claude_admin.sql`). There is **no Rust person-domain service**, no REST API, no admin UI for overrides.
@@ -111,7 +113,7 @@ Anything more detailed (alias schema, bootstrap modes, conflict resolution, gold
 
 ### 2.1 Behaviour while reviewer aliases aren't fully ingested
 
-**Today's gap, concretely** (from §0 audit): no connector emits `value_type='github_login'`, `bitbucket_display_name`, or `slack_user_id`. Author-side metrics work because BambooHR + Cursor emit `email`. Review-side metrics (`pr_review_time`, `reviews_given`, `time_to_first_review`) cannot resolve reviewers to `person_id` at all — `silver.fct_git_review.person_key` (github login) has no path into `person.persons`. The `author_person_id` column exists on `persons` but isn't populated by any current ingestion path.
+**Today's gap, concretely** (from §0 audit): no connector emits `value_type='github_login'` or `bitbucket_display_name`. Author-side metrics work because BambooHR + Cursor emit `email`. Review-side metrics (`pr_review_time`, `reviews_given`, `time_to_first_review`) cannot resolve reviewers to `person_id` at all — `silver.fct_git_review.person_key` (github login) has no path into `person.persons`. The `author_person_id` column exists on `persons` but isn't populated by any current ingestion path. (Slack is not an alias-emission problem in the same sense — see §0: Slack admin API returns no user roster, so `slack_user_id` aliases are moot; Slack resolution flows via `users_details.email_address`.)
 
 This means **I-D in main §14.4 is not "size unknown, on someone else's roadmap"** — it is a concrete, missing piece of work whose owner is undefined. The review-side gap is the largest single content blocker for the diagnosis layer's rule library; we should treat it as such, not as a soft dependency.
 
@@ -194,7 +196,7 @@ The mismatch predicate (§4.3.2) is redefined accordingly: mismatch fires when o
 
 ### 3.2 Per-tenant slot mapping (the binding layer)
 
-**Problem**: Custom-field names differ per tenant. One tenant's `Coder` may be `is_developer` at another, or absent entirely. Some slots may live outside BambooHR (e.g. `team` derived from Slack channel membership). Hardcoding any one tenant's field names in the connector is wrong; ignoring custom fields at other tenants is also wrong.
+**Problem**: Custom-field names differ per tenant. One tenant's `Coder` may be `is_developer` at another, or absent entirely. Some slots may need to live outside BambooHR for tenants whose HR data is sparse (e.g. `team` from a separate org-chart export). Hardcoding any one tenant's field names in the connector is wrong; ignoring custom fields at other tenants is also wrong.
 
 **Solution**: A **slot-mapping configuration** binds the diagnosis layer's logical slots (§3.1) to concrete source fields per tenant.
 
@@ -208,8 +210,8 @@ pub struct SlotMapping {
 }
 
 pub struct Binding {
-    pub source: Source,      // BambooHR, Slack, Heuristic, ManualOverride, Sheet, ...
-    pub field: String,       // BambooHR custom-field name; Slack channel pattern; regex name; etc.
+    pub source: Source,      // BambooHR, Heuristic, ManualOverride, Sheet, ...
+    pub field: String,       // BambooHR custom-field name; regex name; sheet column; etc.
     pub value_type: ValueType, // Bool, String, Enum(Vec<String>)
     pub coercion: Option<Coercion>, // e.g. "Yes"/"No" → Bool true/false
 }
@@ -221,7 +223,7 @@ Persisted in MariaDB (`org_slot_mapping`), one row per `(tenant_id, slot, source
 
 1.  **Manual override** — person-domain canonical override (`*_source = 'manual'` per person PRD §5.2) always wins. Diagnosis layer does not maintain a parallel override table. **Caveat from §0**: today the override mechanism is a dbt seed PR, not an API. Until a person-domain override API exists, F4a's "self-install wizard" cannot let a tenant admin override a person's role/team without Constructor onboarding involvement. This is called out as a real gap in §3.2.3 below, not handwaved.
 2.  **Primary source** — first binding in the configured order. For an engineering tenant's `function_signal:engineering` HR-hint: BambooHR custom field `Coder` (Yes/No), coerced to Bool. For a sales tenant's `function_signal:sales` HR-hint: a `Quota Carrier` Bool, similarly coerced. Same mechanism, different binding.
-3.  **Secondary sources** — fallback chain (e.g. Slack channel for `team` if BambooHR doesn't have it).
+3.  **Secondary sources** — fallback chain (e.g. a separate org-chart export or sheet for `team` if BambooHR doesn't have it; Slack channel-derived team detection is **not** an option — Slack admin API returns no channel data — see §0).
 4.  **Heuristic** — regex on `job_title` (§4.2), only if explicitly enabled in the mapping.
 5.  **Unmapped** — slot is `NULL` for this person; rules referencing it return `not_applicable` (main §4.2 honest-NULL).
 
@@ -235,7 +237,7 @@ The product is **self-install** — a Tenant Admin should be able to wire up Ins
     3.  Coverage check runs live in-wizard (≥80% of active employees populated per slot); slots failing coverage are marked with a yellow warning but can still be saved.
     4.  Wizard ends with a "what works now" preview: which rules from the seeded library will be evaluable, which will stay `not_supported_yet`.
     5.  **If no fields match any logical slot** (small tenants, non-engineering-led HR setups): wizard does not enable F4a features. Tenant stays on F1/F2/F3 (team-level diagnosis) as a **first-class mode**, not a degraded fallback. Wizard explains this clearly: "your HR data doesn't currently expose role-level dimensions; you can still use Insight at team granularity." See §4.4.
-*   **Out of MVP wizard scope** (F4a JSON config + admin UI in follow-up): non-BambooHR source bindings (Slack channels for `team`; heuristic-on-`job_title` for sparse fields). Available via `org_slot_mapping` JSON API in F4a; UI added post-launch.
+*   **Out of MVP wizard scope** (F4a JSON config + admin UI in follow-up): non-BambooHR source bindings (e.g. tenant-supplied org-chart sheet/CSV for `team` if BambooHR is missing it; heuristic-on-`job_title` for sparse fields). Available via `org_slot_mapping` JSON API in F4a; UI added post-launch. (Note: Slack-channel-membership as a `team` source was considered in earlier drafts and dropped — see §0.)
 *   **Permissions**: Slot-mapping CRUD is restricted to **Tenant Admin** role only. ICs and Team Leads see the resulting cohort labels but cannot edit bindings.
 *   **API**: same operations exposed as REST for Constructor's onboarding team to use programmatically when assisting customers.
 *   **Validation at save time**: coverage check (≥80% of active employees per slot), value-set check (e.g. a function-signal HR-hint binding must coerce to Bool), no orphan rules (rule references a slot or function that resolves to fully NULL → blocked at save with explanation).
@@ -314,7 +316,7 @@ What this means for diagnosis-layer work right now:
 These are not roles. For the remaining cohort dimensions:
 
 *   **Primary path** — HR-provided structured fields (e.g. `Teams`, `P&L Function`, `Coder` on a sample enterprise tenant) ingested via the BambooHR connector and bound to slots or function-signal HR-hints through `org_slot_mapping` (§3.2 + §3.1.1).
-*   **Heuristic fallback** — allowed where structured fields aren't populated for a tenant. For `function_signal:engineering` HR-hint: `inferred_engineering = job_title matches /engineer|developer|sre|qa/i`. For `function_signal:sales`: `inferred_sales = job_title matches /sales|account|business development|bdr|sdr|ae\b/i`. For `team`: derive from Slack channel membership (configured per-tenant in §3.2).
+*   **Heuristic fallback** — allowed where structured fields aren't populated for a tenant. For `function_signal:engineering` HR-hint: `inferred_engineering = job_title matches /engineer|developer|sre|qa/i`. For `function_signal:sales`: `inferred_sales = job_title matches /sales|account|business development|bdr|sdr|ae\b/i`. For `team`: heuristic on `job_title` (e.g. team name embedded as a substring) or tenant-supplied sheet/CSV. Slack channel-membership is **not** a feasible fallback — Slack admin API returns no channel data (§0).
 *   **For `role` specifically**: no heuristic — see §4.1, we wait for normalization rather than duplicating it.
 
 When a slot has no source binding for a tenant, the slot resolves to NULL → rules referencing it return `not_applicable` (main §4.2 honest-NULL).
@@ -446,7 +448,7 @@ Some tenants will not have HR data rich enough for F4a cohorts (small companies;
 
 *   `scope=Team` rules — absolute and team-relative thresholds.
 *   Team-level verdicts and verdict history.
-*   Drill-down by team membership (already derived from git/Slack/Jira activity, no HR needed).
+*   Drill-down by team membership (derived from git/Jira activity patterns, no HR needed; not from Slack — see §0 on Slack data shape).
 *   Snooze, feedback, the same `VerdictBanner`.
 
 This is a **fully supported mode**, not a "limited trial". The product UI does not show empty F4a sections, doesn't push upgrade prompts, doesn't mark anything as "premium". Marketing framing: "Insight works at team granularity out of the box; richer HR data unlocks role-level diagnosis." Tenants can adopt F4a later by populating BambooHR or via JSON-config slot bindings.
@@ -468,7 +470,7 @@ This eliminates the "everything is broken" failure mode for tenants whose HR isn
 | Tenant declares a custom function (`growth`, `legal_ops`, `community`) Constructor has no starter vocabulary for | High | Low | Tenant can declare any function; rules referencing it work as long as the tenant binds at least one activity signal. If no signal is bound, function-scoped rules return `not_applicable` (honest-NULL). Constructor adds starters opportunistically as patterns emerge across tenants. |
 | Composite-role person (`{engineering, pm}`) gets evaluated only against one cohort | Medium | Medium | Eligibility uses set-membership (`function_eligible(F) := F ∈ expected_functions`); composite-role people are in every relevant cohort by construction. `mismatch_into(F)` only fires when F is *outside* the declared set. |
 | Tenant declares too many functions / over-fragments their vocabulary | Medium | Medium | Wizard validation: declared functions with <10% population OR no activity signal bound → flagged for admin review. Function vocabulary health surfaced nightly (§4.3.5). |
-| Reviewer / Slack / Bitbucket aliases never get emitted by connectors (I-D content) | High | High | No owner currently. Diagnosis layer must either escalate I-D ownership before F4a or accept the rule library is permanently author-side-only. AST validator rejects review-side rules with `not_supported_yet` — visible product-side, not a silent failure. |
+| Reviewer / Bitbucket aliases never get emitted by connectors (I-D content) | High | High | No owner currently. Diagnosis layer must either escalate I-D ownership before F4a or accept the rule library is permanently author-side-only. AST validator rejects review-side rules with `not_supported_yet` — visible product-side, not a silent failure. (Slack is a separate problem — see §0: admin API returns no message/channel data, so Slack-derived metrics are limited to daily counters regardless of alias work.) |
 | Person-domain override API never built → F4a wizard cannot offer per-person manual override self-install | High | Medium | Wizard scoped to slot bindings only; per-person overrides require Constructor onboarding-team-driven dbt PR. Documented in §3.2.3 option (b). Escalate ownership separately. |
 | `expected_role` axis depends on identity-domain role normalization that has no owner | Medium | Medium | Fall back to per-tenant role-text enum (small, curated, ~10 buckets). Coarse but functional. AST schema unchanged when normalization lands. |
 | Mapping change confused with real role change in verdict trends | Medium | Medium | `org_slot_mapping_history` lives in MariaDB alongside `org_slot_mapping`, distinct from the org-chart's `person_assignments` history; trend chart shows explicit break-point badge on mapping-edit dates (§3.2.5). |
@@ -491,7 +493,7 @@ This eliminates the "everything is broken" failure mode for tenants whose HR isn
 
 8.  **Person-domain override API ownership.** F4a wizard's "self-install" claim is partly false today (per §3.2.3): slot mappings are self-install, but per-person manual overrides require a dbt seed PR because no person-domain override API exists. **Open**: who owns building that API, and is it in scope for F4a or escalated separately? *Owner: identity-domain (where person-domain folded — natural home for golden-record CRUD). Diagnosis-layer Engineering escalates and consumes; does not own. Milestone: identity-domain decides scope before F4a kickoff; if API not in flight by then, F4a v1 ships with documented "slot bindings only" scope.*
 
-9.  **Reviewer/Slack/Bitbucket alias emission ownership** (the real I-D). Per §0 audit, `value_type='github_login' / bitbucket_display_name / slack_user_id` are never emitted by any current connector. PRD's earlier framing called this "on identity-resolution's roadmap" — there is no such roadmap item. **Open**: who owns adding alias emission per source? *Owner: connector-owners per source (one PR per connector); identity-resolution as fallback owner if connector teams defer. Diagnosis-layer Engineering escalates; does not own. Milestone: at least one git source must be alias-complete before any review-side rule promotes to `active`.*
+9.  **Reviewer / git-host alias emission ownership** (the real I-D). Per §0 audit, `value_type='github_login'` and `bitbucket_display_name` are never emitted by any current connector. PRD's earlier framing called this "on identity-resolution's roadmap" — there is no such roadmap item. **Open**: who owns adding alias emission per source? *Owner: connector-owners per source (one PR per connector); identity-resolution as fallback owner if connector teams defer. Diagnosis-layer Engineering escalates; does not own. Milestone: at least one git source must be alias-complete before any review-side rule promotes to `active`.* Slack is **not** part of this open question — Slack admin API doesn't return the upstream data that aliases would resolve against (§0); accessing richer Slack data is a separate procurement decision (Slack Enterprise Grid SCIM/Web API), out of this PRD's scope.
 
 10. **`expected_functions` axis source.** Until identity/person-domain ships role normalization, the diagnosis layer needs a per-tenant **role-to-functions table** mapping raw `person.persons.role` text → set of declared functions (e.g. `Founding Engineer → {engineering, pm}`, `Solutions Architect → {engineering, sales}`, `Senior Backend Engineer → {engineering}`). **Open**: is this maintained by onboarding (per-tenant migration) or by the tenant admin (UI in F4a)? *Owner: PM (decision); onboarding (operational owner for design-partner phase); tenant admin (long-term owner once UI ships). Engineering preference: curated by onboarding for design partners, expose as JSON config in F4a, defer UI to post-F4a. Milestone: decide before F4a kickoff.*
 

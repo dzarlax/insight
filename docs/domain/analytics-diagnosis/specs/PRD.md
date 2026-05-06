@@ -32,7 +32,7 @@ Cut order under pressure: F7 → F6 → F5 → F4a → F3. Never cut F0a/F0b/F1 
 
 | Foundation we depend on | Status in code |
 |---|---|
-| identity-resolution (`persons`, `aliases`) | Tables exist; only email/employee_id/display_name aliases emitted today; no github / slack / bitbucket aliases yet |
+| identity-resolution (`persons`, `aliases`) | Tables exist; only email / employee_id / display_name aliases emitted today; github / bitbucket aliases not emitted; Slack resolution works via `users_details.email_address` because Slack admin API returns no user roster or channel data (counters only) |
 | metric-catalog | PRD-only, **no code, no open PR**; F0b absorbs the minimum-viable slice |
 | org-chart (`person_assignments`) | PRD-only, no code, no owner; F4a is hard-blocked on it |
 | person-domain (override API) | Folded into identity; manual override = dbt seed PR (not an API) |
@@ -242,7 +242,7 @@ The remainder of this PRD assumes that contract. Cross-references appear as "Ide
     *   The rule engine restricts `RelativeDelta` and `Percentile` thresholds to **period aggregates of ≥7 days** (week-over-week minimum). One-day deltas are rejected at AST validation time.
     *   Verdict response carries a `time_basis: "UTC"` field so the FE can show the "UTC" pill consistently with `PeriodSelectorBar.tsx`.
 *   **How (target)**:
-    *   Track the dependency on the timezone roadmap in CLAUDE.md (BambooHR `location` → Slack `tz` → M365 `mailboxSettings.timeZone` → `insight.people.timezone`). When `people.timezone` is populated, gold views switch to `toDate(ts, p.timezone)` and the 7-day floor is lifted.
+    *   Track the dependency on the timezone roadmap. Original plan was `BambooHR location → Slack tz → M365 mailboxSettings.timeZone → insight.people.timezone`; the **Slack `tz` step is unavailable** — `tz` lives on `bronze_slack.users` which Slack admin API does not populate (only `users_details` daily counters are returned, with no `tz` column). The realistic path is therefore `BambooHR location` (where present) → `M365 mailboxSettings.timeZone` (primary fallback) → `insight.people.timezone`. When `people.timezone` is populated, gold views switch to `toDate(ts, p.timezone)` and the 7-day floor is lifted.
 
 ---
 
@@ -685,12 +685,12 @@ Adjacent in-flight work in the same team (declared dependencies):
 *   **Scope**:
     *   **(I-E.1) BambooHR connector expansion** — connector work. Today the connector has a `bamboohr_employees_custom_fields` config flag declared in `connector.yaml` but no `Map(String, String)` schema in bronze and no unified mechanism that propagates custom-field values through silver→gold. I-E.1 covers: bronze schema change to store custom fields as a map column, dbt unwrap into typed silver columns, `/discovered-fields` endpoint for the slot-mapping UI. Heavier than "flip the flag".
     *   **(I-E.2) Slot mapping config & resolution** — diagnosis-layer slice. `org_slot_mapping` table in MariaDB; resolver feeds the org-chart pipeline that writes `person_assignments`; mapping CRUD API. Coordinated with the org-chart PR for any new `assignment_type` values.
-    *   **(I-E.3) Slack `users.tz` ingestion** — connector work. Unblocks lifting §4.4 7-day-period floor for relative rules.
-    *   **(I-E.4) (optional, post-F4a)** M365 Graph `mailboxSettings.timeZone` if Slack tz isn't populated for a tenant.
+    *   **(I-E.3) ~~Slack `users.tz` ingestion~~ — dropped.** Slack admin API does not return user roster (`bronze_slack.users` is empty); the `tz` field cannot be populated from current Slack access. Closest realistic alternative: pursue Slack Enterprise Grid SCIM/Web API access for user profiles (separate procurement decision, out of scope for this PRD).
+    *   **(I-E.4) M365 Graph `mailboxSettings.timeZone`** — promoted from "optional fallback if Slack tz isn't populated" to **primary path for per-person timezone**, since the Slack route is not feasible (see I-E.3 above).
 *   **Owner**: connector work for I-E.1 / I-E.3 / I-E.4; diagnosis-layer slice for I-E.2.
 *   **Gate**:
     *   F4a hard-gates on I-E.1 + I-E.2 (no point in F4a without ingestion + mapping).
-    *   Lifting the §4.4 7-day floor is gated on I-E.3 (or I-E.4) reaching ≥80% of active employees with non-NULL timezone.
+    *   Lifting the §4.4 7-day floor is gated on I-E.4 reaching ≥80% of active employees with non-NULL timezone (I-E.3 dropped — Slack admin API does not deliver `tz`).
 
 ### 14.5 Dependency summary
 
@@ -750,7 +750,7 @@ Surfaced explicitly so it doesn't sneak back in:
 | F4a's foundations (org-chart, custom-field plumbing) are not yet in flight | High | Critical | F4a cannot be scheduled until those implementations begin. Track as explicit prerequisite — not as sub-tasks absorbed into F4a's estimate. F0–F3 unblocked in the meantime. |
 | Foundation tracks (catalog, org-chart, person-domain API) have no owners and no open PRs (May 2026 audit) | High | Critical | Stop treating "PRD merged" as "in flight". F0b (catalog MVP) is now in diagnosis-layer scope; org-chart and person-domain API ownership must be escalated explicitly before F4a planning starts. If escalation fails, F4a is unbuildable on the documented timeline. |
 | Tenant-isolation skip is broader than the single `handlers.rs:287` comment suggests (`query_metric()` also skips) | High | Critical | F0 mandates a one-time audit pass across `analytics-api` handlers for missing `tenant_id` injection (see F0 in-scope). Subsequent PRs are gated on the review checklist, but the existing surface area gets cleaned in one batch, not pull-by-pull. |
-| Connector-side alias emission (github_login, slack_user_id, bitbucket) has no owner — review-side rules are blocked indefinitely | High | High | Escalate ownership before F4a kickoff (Identity Open Q §6.9). Until at least one git source emits reviewer aliases, the rule library remains author-side-only and review-side `metric_key`s are AST-rejected with `not_supported_yet`. Communicate scope clearly to design partners. |
+| Connector-side alias emission (github_login, bitbucket) has no owner — review-side rules are blocked indefinitely | High | High | Escalate ownership before F4a kickoff (Identity Open Q §6.9). Until at least one git source emits reviewer aliases, the rule library remains author-side-only and review-side `metric_key`s are AST-rejected with `not_supported_yet`. Communicate scope clearly to design partners. (Note: earlier framing also listed `slack_user_id` here. Slack is a different problem — admin API returns no user roster or messages, so even alias work would not unlock Slack-derived signals beyond the daily counters we already have.) |
 | Exec-level Goodhart: `% Red teams` becomes a department KPI before §16.1 is decided | Medium | High | Close §16.1 before F2 ships; verdict roll-up policy precedes the technical capability to roll up. Until decided, `verdict_history` is per-team-cohort only at the API level — no roll-up endpoint exposed. |
 | Catalog adds `kind=diagnosis` later, conflicts with our v1 `kind` reuse | Low | Medium | If we ship reusing `alert` and catalog later adds `diagnosis`, migration is mechanical: re-classify our diagnosis-authored rows to the new kind. Keep `source_app` / `created_by` columns to identify them. |
 | LLM prompt injection leaks cross-tenant catalog | Low | Critical | Strict JSON output, tenant-filtered catalog injection, server-side `team_id` enforcement (§3.3.1). |
