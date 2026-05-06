@@ -16,7 +16,7 @@
 
 **Phasing at a glance.**
 
-```
+```text
 F0a (skeleton, literal threshold)  →  F0b (catalog MVP)  →  F1 (deterministic MVP)
                                                               ↓
 F2 (verdict history)  →  F3 (relative rules, single tenant)
@@ -93,7 +93,7 @@ The Analytics Diagnosis Layer sits on top of several existing Insight domains. R
 | Metric Catalog | `insight/docs/domain/metric-catalog/specs/PRD.md` (merged v1) | `metric_catalog(metric_key, label_i18n_key, unit, format, higher_is_better, source_tags, is_enabled, ...)`. `metric_threshold(metric_key, scope, role_slug, team_id, good, warn, alert_trigger, alert_bad, is_locked, lock_reason, ...)`. Scope ∈ `{product-default, tenant, role, team, team+role}`. Resolution chain `team+role → team → role → tenant → product-default`, **locks are ceilings** (resolution stops). `tenant_id IS NULL` enforced by CHECK in v1. Migration-only metadata writes. | **Consumer.** Every rule's `RuleAST` references a valid `metric_key`. Threshold values come from `GET /catalog/metrics?role_slug=...&team_id=...` — diagnosis layer **does not reimplement resolution**. Verdict's `explanation` exposes `resolved_from` so admins see which scope supplied the threshold. Locks are respected: a rule cannot override a locked tenant threshold with a narrower-scope value (§7.4 below). Calculation rules / `primary_query_id` are deferred in catalog v1 — our engine still derives "how is metric X computed" from `query_ref` directly. `kind` enum (visual vs alerting vs diagnosis) is DESIGN-owned in catalog; we likely register as `kind=diagnosis` or reuse `alert` (Open Q §16.9). |
 | Identity Resolution | `insight/docs/domain/identity-resolution/specs/PRD.md` | `aliases`, bootstrap pipeline, alias→`person_id` hot-path lookup. | **Consumer.** Diagnosis uses resolved `person_id`. **Extends** with author/reviewer namespace bridge (Identity doc §2.2; tracked as I-D in §14.4) — out of IR's current scope. |
 | Person | `insight/docs/domain/person/specs/PRD.md` | `persons` golden record, manual overrides via `*_source = 'manual'`, person availability. | **Consumer.** Reads `role`, `manager_person_id`, `org_unit_id`. Tenant-admin overrides flow through this domain's mechanism — no parallel override table. |
-| Org Chart | `insight/docs/domain/org-chart/specs/PRD.md` | `org_units` (SCD Type 2), `person_assignments` (temporal `assignment_type` ∈ `{org_unit, role, department, team, manager, project, location, cost_center}`). | **Consumer + extension.** Reuses `person_assignments` for slot historization. May require **new `assignment_type` values** for slots like `is_coder`, `product`, `subteam` — coordinated with org-chart team. |
+| Org Chart | `insight/docs/domain/org-chart/specs/PRD.md` | `org_units` (SCD Type 2), `person_assignments` (temporal `assignment_type` ∈ `{org_unit, role, department, team, manager, project, location, cost_center}`). | **Consumer + extension.** Reuses `person_assignments` for slot historization. May require **new `assignment_type` values** for slots like `product`, `subteam`, plus a generic `function_signal_binding` carrier (per Identity §3.1.1) — coordinated with org-chart team. |
 | Connector Framework | `insight/docs/domain/connector/specs/PRD.md` | Bronze ingestion. §5.2 already requires support for source-specific custom fields (BambooHR custom attributes) without core schema change. | **Consumer.** I-E.1 (BambooHR custom-field expansion in §14.4) is **not** a new requirement — it's an existing contract. Diagnosis adds the slot-mapping layer (Identity doc §3.2) on top. |
 
 The full identity & cohort contract — including how slot mapping bridges tenant-specific source fields to org-chart's `assignment_type`, and how eligibility predicates compose org-chart slots with activity signals — lives in the [Identity & Cohorts companion doc](./IDENTITY_AND_COHORTS.md), with its own §0 reconciliation table.
@@ -206,10 +206,10 @@ See [`IDENTITY_AND_COHORTS.md`](./IDENTITY_AND_COHORTS.md). It owns:
 *   Ground-truth audit of identity-related code today (BambooHR ingestion, `insight.people`, `silver.class_people`, namespace gaps).
 *   Person→Team mapping contract (gates F0).
 *   Author ↔ reviewer namespace bridge (gates review-side metrics; tracked as I-D).
-*   Cohort dimensions / slot contract (`is_coder`, `team`, `function`, `product`, …).
+*   Cohort dimensions / slot contract (`team`, `function` (set, tenant-declared), `product`, plus per-function activity signals — see Identity §3.1.1).
 *   Per-tenant slot mapping (`org_slot_mapping`), self-install wizard, binding composition, mapping-change semantics.
 *   Three-tier role data strategy: HR-provided (primary), heuristic fallback, conditional formal `role_catalog`.
-*   Cohort eligibility predicates (replaces auto-injection of `is_coder`).
+*   Cohort eligibility predicates (replaces auto-injection of any single-function HR Bool — `is_coder` was the early example; generalised to `function_eligible(F)` over an elastic vocabulary).
 *   Team-level mode (first-class for tenants without rich HR).
 *   Identity-specific risks and open questions.
 
@@ -537,7 +537,7 @@ PRD-language like "team owns X" is shorthand for "this PR or set of PRs is the p
 
 ### 14.2 Track overview
 
-```
+```text
 Feature track:    F0 → F1 → F2 → F3 → F4a → F5 → F6 → F7
                   └─────dogfood──┘     └────design partners────┘   └──GA──┘
 
@@ -604,7 +604,7 @@ Adjacent in-flight work in the same team (declared dependencies):
 
 *   **Goal**: Week-over-week and month-over-month deltas without needing role data.
 *   **In scope**:
-    *   `ThresholdType::RelativeDelta` extension to AST.
+    *   `ThresholdSource::RelativeDelta` extension to AST (matches §3.2 enum).
     *   `scope=Team` percentile-within-team rules (cohort = members of one team — no cross-team statistics yet).
     *   Backtest/shadow mode (§8.2) — mandatory before activation.
     *   7-day-period floor enforced at AST validation (per §4.4 UTC-bucketing constraint).
@@ -615,12 +615,12 @@ Adjacent in-flight work in the same team (declared dependencies):
 
 #### F4a — HR-provided Cohort Dimensions (7–9 weeks of F4a logic + 2–4 weeks of org-chart implementation prerequisite; first multi-tenant ship)
 
-*   **Goal**: Cohort-based rules (`is_coder`, `team`, `function`, `product`, etc.) on real HR-provided dimensions, with heuristic fallback for sparse-HR tenants. Self-installable by Tenant Admin without Constructor onboarding involvement.
+*   **Goal**: Cohort-based rules across declared functions (`team`, `function` set, `product`, plus per-function activity signals — Identity §3.1.1) on real HR-provided dimensions, with heuristic fallback for sparse-HR tenants. Self-installable by Tenant Admin without Constructor onboarding involvement.
 *   **Hidden prerequisite — org-chart hasn't been implemented yet** (only the PRD has merged; implementation not started at writing). `person_assignments`, `org_units`, the v1 assignment_type enum — none exist as code today. F4a relies on these for temporal slot historization. Either (a) F4a absorbs minimum-viable org-chart implementation as in-scope work (table + assignment_types + bulk-load + point-in-time query), or (b) we wait for someone to ship org-chart separately. Either way the calendar time is real — not absorbed into the 7–9w F4a estimate. **F4a cannot be scheduled until org-chart implementation is in flight.**
 *   **In scope**:
     *   **Either bring up org-chart `person_assignments` minimally, or coordinate with whoever picks up org-chart implementation.** No further F4a work proceeds until `person_assignments` accepts writes.
     *   Ingestion expansion via I-E to pull arbitrary BambooHR custom fields into bronze (this is also more than a flag — see I-E.1 below).
-    *   Add new `assignment_type` values (`is_coder`, `product`, `subteam`, etc.) to org-chart's enum.
+    *   Add new `assignment_type` values (`product`, `subteam`, plus a generic `function_signal_binding` carrier per Identity §3.1.1) to org-chart's enum.
     *   Gold layer: `insight.people_org` view + `*_bullet_rows` enrichment with org slots.
     *   AST `cohort_filter` accepts any populated slot. **No auto-injection** — each rule declares its cohort explicitly via named eligibility predicates (Identity doc §4.3).
     *   Eligibility-predicate library (~6–8 named predicates: `shipped_code_90d`, `reviewed_code_90d`, `engineering_eligible`, `active_recently`, `manages_team`, `tenured_30d`).
@@ -637,7 +637,7 @@ Adjacent in-flight work in the same team (declared dependencies):
     *   First multi-tenant deploy.
 *   **Out of scope**: LLM-generated profiles; LLM-generated mapping suggestions (heuristic only in F4a); drift detection; formal `role_slug` taxonomy.
 *   **Depends on**: F1, **org-chart in flight with tenant_id from day 1** (§4.3), **I-E.1 + I-E.2 complete** (BambooHR custom-field ingestion + slot mapping resolver, both tenant-aware from day 1).
-*   **Exit criteria**: ≥2 design-partner tenants with HR-dimension rules active; `is_coder` filter cleanly excludes non-engineering activity in dogfood; cross-tenant query never compiles without `tenant_id`; for dogfood tenant (Constructor) ≥4 slots populated with ≥80% coverage; for design-partner tenants the onboarding validation passes for ≥3 slots.
+*   **Exit criteria**: ≥2 design-partner tenants with HR-dimension rules active; `function_eligible(engineering)` cleanly excludes non-engineering activity in dogfood (and `mismatch_into(engineering)` fires on at least one real out-of-function signal); cross-tenant query never compiles without `tenant_id`; for dogfood tenant ≥4 slots populated with ≥80% coverage; for design-partner tenants the onboarding validation passes for ≥3 slots.
 *   **Risk if HR is sparse**: Tenant has only `job_title` populated → fallback regex must do all the work → product looks coarse. Mitigation: clear UI honesty + admin override + tenant onboarding gate that warns before activation.
 *   **Risk if HR is rich but ingestion is hard**: §16.11 might surface a non-trivial integration (custom Sheets/Excel sync, export pipelines). Mitigation: explicitly scope I-E only after §16.11 is answered; don't commit to F4a timeline until then.
 
@@ -763,14 +763,16 @@ Surfaced explicitly so it doesn't sneak back in:
 
 ## 16. Open Questions
 
-1.  **Verdict ownership at the org level**: when a team rolls up to a department, do we aggregate verdicts (worst-of?) or compute fresh at the department cohort? The math differs and the product implication differs. **Goodhart-above-the-manager risk**: there is internal precedent for executive leadership converting raw engineering signals (e.g. lines-of-code velocity claims) into KPIs they steer on. If `% of teams with Red verdict` becomes a department-level scoreboard before we have decided what that number means, we recreate the same trap one layer up. *Owner: PM. Decision required before F2 ships (verdict_history makes department-level views technically possible — the policy must lead the capability, not chase it).*
-2.  **Cross-tenant baseline opt-in**: would a customer ever benefit from "industry baselines" computed across tenants (anonymized)? Powerful but a compliance minefield. *Default: no. Revisit post-GA.*
-3.  **IC visibility**: should ICs ever see flags about themselves (transparency) vs. manager-only (managerial tool)? Current PRD assumes manager-only — needs explicit user research before changing. *Owner: PM + Legal.*
-4.  **Rule marketplace**: should Tenant rules be shareable across tenants (template gallery)? Useful for cold-start but couples tenants. *Defer to post-Phase 3.*
-5.  **Threshold confidence intervals**: P75 over a cohort of 8 has wide CIs. Do we expose CI to the manager, or wait until cohorts are large enough? *Engineering preference: hide until cohort ≥20; PM TBD.*
-6.  **Drift acceptance UX**: when a profile is auto-flipped to `drift_review`, is the prior profile still active or paused? *Default proposal: stays active until admin acts; flag the staleness in UI.*
-7.  **Feedback weight on rule quality**: how much does a single manager's "false positive" tag move `false_positive_rate_30d`? Need a weighting model that resists single-noisy-user skew.
-8.  **`scope=Tenant` rules without role data**: should F1 allow tenant-wide rules at all (e.g. "any team with Red verdict for 4 weeks")? Or do tenant-scope rules wait until F4a so they can leverage HR-provided cohort dimensions? *Engineering preference: allow only `team` and `team_relative` cohorts in F1. PM TBD.*
-9.  **Metric Catalog `kind` registration for diagnosis layer**: catalog v1 defines `metric_threshold` with a `kind` enum that's DESIGN-owned, currently used for `{visual zones, alerting}`. Diagnosis layer is a third consumer: do we register a new `kind=diagnosis` (clean separation, more rows per metric) or reuse `kind=alert` / specific kinds like `warn`/`alert_trigger` (no schema change, but couples diagnosis policy to alerting policy)? *Engineering preference: reuse existing kinds for v1 — fewer migrations — and propose `kind=diagnosis` only if a real conflict surfaces. Coordinate with Metric Catalog DESIGN doc (deferred there).*
+> **Note on owners.** Per project convention, open questions name **role-level owners** (PM, Legal, Engineering, identity-domain, etc.) and **milestone-based timing** (e.g. "before F2 ships"), not specific people or calendar dates. Owners change, documents stay. Each phase kickoff converts the role-level owner here into a named person on the kickoff agenda; that person is tracked in the phase's working doc, not in this PRD.
+
+1.  **Verdict ownership at the org level**: when a team rolls up to a department, do we aggregate verdicts (worst-of?) or compute fresh at the department cohort? The math differs and the product implication differs. **Goodhart-above-the-manager risk**: there is internal precedent for executive leadership converting raw engineering signals (e.g. lines-of-code velocity claims) into KPIs they steer on. If `% of teams with Red verdict` becomes a department-level scoreboard before we have decided what that number means, we recreate the same trap one layer up. *Owner: PM. Milestone: decide before F2 kickoff — `verdict_history` makes department-level views technically possible, so the policy must lead the capability.*
+2.  **Cross-tenant baseline opt-in**: would a customer ever benefit from "industry baselines" computed across tenants (anonymized)? Powerful but a compliance minefield. *Owner: PM + Legal. Default: no. Revisit post-GA only.*
+3.  **IC visibility**: should ICs ever see flags about themselves (transparency) vs. manager-only (managerial tool)? Current PRD assumes manager-only — needs explicit user research before changing. *Owner: PM + Legal. Milestone: decide before F4a opens to first design partner.*
+4.  **Rule marketplace**: should Tenant rules be shareable across tenants (template gallery)? Useful for cold-start but couples tenants. *Owner: PM. Defer until post-F7.*
+5.  **Threshold confidence intervals**: P75 over a cohort of 8 has wide CIs. Do we expose CI to the manager, or wait until cohorts are large enough? *Owner: PM (decision); Engineering (implementation). Engineering preference: hide until cohort ≥20. Milestone: decide before F3 (relative rules).*
+6.  **Drift acceptance UX**: when a profile is auto-flipped to `drift_review`, is the prior profile still active or paused? *Owner: PM. Default proposal: stays active until admin acts; flag the staleness in UI. Milestone: decide before F5 ships.*
+7.  **Feedback weight on rule quality**: how much does a single manager's "false positive" tag move `false_positive_rate_30d`? Need a weighting model that resists single-noisy-user skew. *Owner: Engineering (modelling); PM (final scaling choice). Milestone: decide before F1 GA so feedback dashboard has a stable definition.*
+8.  **`scope=Tenant` rules without role data**: should F1 allow tenant-wide rules at all (e.g. "any team with Red verdict for 4 weeks")? Or do tenant-scope rules wait until F4a so they can leverage HR-provided cohort dimensions? *Owner: PM. Engineering preference: allow only `team` and `team_relative` cohorts in F1. Milestone: decide before F1 kickoff.*
+9.  **Metric Catalog `kind` registration for diagnosis layer**: catalog v1 defines `metric_threshold` with a `kind` enum that's DESIGN-owned, currently used for `{visual zones, alerting}`. Diagnosis layer is a third consumer: do we register a new `kind=diagnosis` (clean separation, more rows per metric) or reuse `kind=alert` / specific kinds like `warn`/`alert_trigger` (no schema change, but couples diagnosis policy to alerting policy)? *Owner: metric-catalog DESIGN authors (decision); diagnosis-layer Engineering (consumer feedback). Engineering preference: reuse existing kinds for v1 — fewer migrations — and propose `kind=diagnosis` only if a real conflict surfaces. Milestone: decide before F0b (catalog MVP) lands.*
 
 Identity- and cohort-specific open questions live in Identity doc §6 (role inference buckets, connector custom-field whitelist, mapping drift, binding depth, predicate-coverage UX, predicate library evolution, onboarding HR sanity check).
