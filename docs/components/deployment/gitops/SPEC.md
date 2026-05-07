@@ -18,6 +18,7 @@ This document is the technical source of truth for the hybrid GitOps deployment 
    - [2.1 Image Tag Format](#21-image-tag-format)
    - [2.2 Why Date-Time-ShortSHA](#22-why-date-time-shortsha)
    - [2.3 Chart and Manifest Versioning](#23-chart-and-manifest-versioning)
+   - [2.4 Chart Publishing](#24-chart-publishing)
 3. [3. Step-by-Step Workflow](#3-step-by-step-workflow)
    - [3.1 Code Push to GitHub](#31-code-push-to-github)
    - [3.2 Image Build and Push to GHCR](#32-image-build-and-push-to-ghcr)
@@ -94,7 +95,7 @@ The deployment system has four explicit goals:
 The four arrows that matter:
 
 1. **Public outbound** — GitHub Actions push to GHCR. No secret in the egress.
-2. **Public inbound** — the GitLab poller pulls image-tag listings from GHCR via `skopeo list-tags`. No code, no secrets.
+2. **Public inbound** — the GitLab poller pulls chart-tag listings from `oci://ghcr.io/cyberfabric/charts/insight` via `skopeo list-tags`. No code, no secrets.
 3. **Internal commit** — the poller commits an updated `image.tag` to the internal GitLab. Confined to the corporate network.
 4. **Cluster apply** — the engineer's `helm upgrade --install` runs from a workstation with VPN + kubeconfig. The cluster never reaches out to GitLab; this is **pull-from-engineer**, not GitOps reconciliation.
 
@@ -153,9 +154,41 @@ The format is chosen to satisfy four constraints simultaneously:
 
 ### 2.3 Chart and Manifest Versioning
 
-- Helm chart versions in `Chart.yaml` follow semver (`0.1.0`, `0.2.0`, …) and bump per chart-shape change. The chart version is decoupled from the image tag.
-- The `infra/insight-gitops` repository tags its own commits as `deploy-YYYY.MM.DD.HH.MM-<shortSHA>` only when an engineer runs `make tag` after a successful production deploy. This is for rollback-by-checkout, not for triggering anything.
-- Image tags in `values.yaml` are **always** explicit (`image.tag: 2026.05.06.09.17-e4e2ba3`). Never `:latest`, never floating tags, never empty.
+The deployment artifact is the umbrella Helm chart, published per merge to `oci://ghcr.io/cyberfabric/charts/insight:<semver>`. The gitops repo pins exactly one published version per environment. The contract has four versioned things, each with one job:
+
+| Field | Where | Format | Bumped by |
+|---|---|---|---|
+| Image tag | GHCR image, e.g. `ghcr.io/cyberfabric/insight-api-gateway:T` | `YYYY.MM.DD.HH.MM-<shortSHA>` | CI on every image build (status quo). |
+| Subchart `appVersion` | `src/.../helm/Chart.yaml` (one per service) | image tag | CI, when the service's image rebuilds. |
+| Subchart `version` | same `Chart.yaml` | semver | PR author, only when subchart templates change. |
+| Umbrella `version` | `charts/insight/Chart.yaml` | semver, patch per publish, minor on shape change | CI per merge to `main`. |
+| Umbrella `appVersion` | same `Chart.yaml` | image tag of the publishing CI run | CI per merge to `main`. Display only. |
+| Gitops pin | `infra/insight-gitops/.insight-version` | one line, umbrella semver, e.g. `0.1.47` | poller (auto for `dev`); engineer MR (for `virtuozzo`). |
+
+Rules that follow from this:
+
+- Each subchart's `values.yaml` defaults `image.tag = ""`, and the templates resolve via `default .Chart.AppVersion`. **Inside a subchart, `.Chart.AppVersion` is that subchart's `appVersion` — not the umbrella's.** Per-service tag granularity is preserved: rebuilding only `api-gateway` advances only that subchart's `appVersion`, while every other service stays on its prior tag.
+- The umbrella's `appVersion` is the publishing CI run's build tag. It is informational only (visible in `helm list`, `kubectl describe pod`); no template reads it.
+- The umbrella `version` patch-bumps per CI publish. Minor bumps require an explicit PR change to the umbrella `Chart.yaml` — used when the umbrella's own templates or values shape change.
+- Image tags in environment values files are usually unset (let the chart `appVersion` flow through). Set explicitly only for hotfix scenarios — running one service at a tag different from the one bundled in the umbrella version.
+- `:latest` is consumed only by ad-hoc local development, never by the chart, never by the gitops repo, never by the poller.
+
+The `infra/insight-gitops` repository may tag its own commits as `deploy-YYYY.MM.DD.HH.MM-<shortSHA>` when an engineer runs `make tag` after a successful deploy. This is for rollback-by-checkout, not for triggering anything; the cluster's source of truth is `.insight-version` at `HEAD`.
+
+### 2.4 Chart Publishing
+
+Per merge to `main` of `cyberfabric/insight`, GitHub Actions publishes the umbrella chart to GHCR in one workflow. The contract — independent of any specific YAML — is:
+
+1. Build whichever service images changed (existing behaviour).
+2. For each rebuilt service, bump that subchart's `Chart.yaml` `appVersion` to the build tag. Subchart `version` is bumped only when the subchart's templates changed (PR author's call, gated by review).
+3. Bump the umbrella's `Chart.yaml`: `version` patch-bumps, `appVersion` becomes the build tag.
+4. Run `helm dependency update charts/insight` to regenerate `Chart.lock` from `file://` subcharts.
+5. `helm package charts/insight -d dist/`.
+6. `helm registry login ghcr.io` using the workflow's `GITHUB_TOKEN`.
+7. `helm push dist/insight-<version>.tgz oci://ghcr.io/cyberfabric/charts`.
+8. Commit the version bumps back to `main` so the repo state matches what was published.
+
+Resulting OCI artifact: `oci://ghcr.io/cyberfabric/charts/insight:<version>`. The `charts/` segment is part of the GHCR package name (standard Helm-OCI behaviour). The decision rationale lives in [ADR 0001](../specs/ADR/0001-chart-publishing-on-merge.md).
 
 ## 3. Step-by-Step Workflow
 
@@ -185,36 +218,36 @@ The workflow does **not** touch any private system. It does not know GitLab exis
 
 ### 3.3 GitLab Poller Updates Manifests
 
-A scheduled GitLab CI job `image-poller` runs once per hour (cron `0 * * * *`) on a runner inside the corporate network. Its single responsibility: detect new images on GHCR and reflect them in the manifests repo. It does **not** deploy.
+A scheduled GitLab CI job `chart-poller` runs once per hour (cron `0 * * * *`) on a runner inside the corporate network. Its single responsibility: detect new umbrella chart versions on GHCR and bump the gitops pin for environments listed in `auto_envs`. It does **not** deploy.
 
 Logic (pseudocode, implemented in `infra/insight-gitops/scripts/poller.sh`):
 
 ```
-for service in $(yq '.services[]' .poller.yaml); do
-    current=$(yq ".image.tag" environments/${ENV}/${service}/values.yaml)
-    latest=$(skopeo list-tags docker://ghcr.io/cyberfabric/insight-${service} \
-             | jq -r '.Tags[]' \
-             | grep -E '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}$' \
-             | sort -r | head -n1)
-    if [ "$current" != "$latest" ]; then
-        yq -i ".image.tag = \"$latest\"" environments/${ENV}/${service}/values.yaml
-        CHANGED=1
-    fi
-done
+chart_repo=$(yq '.chart_repository' .poller.yaml)   # oci://ghcr.io/cyberfabric/charts/insight
+pin_file=$(yq '.version_pin_file' .poller.yaml)     # .insight-version
+regex=$(yq '.semver_regex' .poller.yaml)            # ^[0-9]+\.[0-9]+\.[0-9]+$
 
-if [ "$CHANGED" = "1" ]; then
-    git add environments/
-    git commit -m "chore(poller): bump image tags ($(date -u +%Y-%m-%dT%H:%MZ))"
+current=$(cat "$pin_file")
+latest=$(skopeo list-tags docker://${chart_repo#oci://} \
+         | jq -r '.Tags[]' \
+         | grep -E "$regex" \
+         | sort -V | tail -n1)
+
+if [ "$current" != "$latest" ]; then
+    echo "$latest" > "$pin_file"
+    git add "$pin_file"
+    git commit -m "chore(poller): bump .insight-version $current → $latest"
     git push origin main
 fi
 ```
 
 Behaviour:
 
-- Strict regex on the tag format. `:latest`, manual tags, semver candidates are ignored.
-- One commit per poll run, no per-service commits, so the diff is one logical "promotion".
+- Strict semver regex on the tag listing. Pre-release tags or anything off-format is ignored.
+- One commit per poll run when the pin moves; nothing committed when no new version exists.
 - Commits are authored by a service account (`infra-poller@cyberfabric.local`) with a deploy key scoped to push to `main` of `infra/insight-gitops` only.
-- `dev` environment is polled. `stage` and `prod` are **not** auto-polled — those bumps are PR'd by an engineer, see [§3.4](#34-engineer-pulls-and-deploys).
+- The poller acts only on environments listed in `auto_envs` of `.poller.yaml`. `dev` is included; `virtuozzo` is **not** auto-polled — those bumps are PR'd by an engineer, see [§3.4](#34-engineer-pulls-and-deploys).
+- The poller does not write to per-environment values files. Image tags in env values are expected to be empty (the chart's per-subchart `appVersion` flows through). Hotfix-style explicit `image.tag` overrides are an engineer-authored MR, never a poller action.
 - A failed `git push` (e.g. someone else pushed a manual change in the same hour) retries with `git pull --rebase` once; on a second failure it leaves the repo dirty and surfaces a CI failure.
 
 The poller does **not** trigger a deploy. It does **not** call ArgoCD. It does **not** notify the cluster. It is a one-way reflector from GHCR to GitLab.
@@ -227,7 +260,7 @@ A deploy is always initiated by a human at a workstation. Steps:
 2. **Inspect** — `git log --oneline origin/main ^HEAD@{upstream}` (run by `make diff`) shows the poller commits since the last deploy.
 3. **VPN check** — `make deploy ENV=dev` runs the cluster reachability probe before doing any work.
 4. **Diff** — the Makefile renders the chart with the current values (`helm template …`) and stores the rendered manifest under `.deploy/last-render-${ENV}.yaml`. The engineer can `diff` against the previous render to see what is changing on the cluster.
-5. **Apply** — `helm upgrade --install insight $CHART -n insight -f environments/${ENV}/values.yaml`, where `$CHART` resolves to either a sibling checkout of `cyberfabric/insight` (`../insight/charts/insight`, the MVP default) or an OCI reference (`oci://ghcr.io/cyberfabric/charts/insight` once chart releases are automated). The chart is **not** vendored into the gitops repo — see [§7](#7-repository-layout-target). The Makefile passes `--atomic --timeout 10m` so a failed deploy is rolled back automatically.
+5. **Apply** — `helm upgrade --install insight $CHART --version $(cat .insight-version) -n insight -f environments/${ENV}/values.yaml`, where `$CHART = oci://ghcr.io/cyberfabric/charts/insight`. The chart is pulled from GHCR at deploy time; the gitops repo does **not** vendor it — see [§7](#7-repository-layout-target). The Makefile passes `--atomic --timeout 10m` so a failed deploy is rolled back automatically.
 6. **Verify** — `make status ENV=dev` runs `kubectl rollout status` for each deployment + `helm test` for smoke tests.
 
 For `stage` and `prod`:
@@ -338,18 +371,20 @@ A `Brewfile` at the repo root captures these dependencies; `make doctor` runs `b
 ```make
 # infra/insight-gitops/Makefile
 
-ENV         ?= dev
-NAMESPACE   ?= insight
-RELEASE     ?= insight
-CHART       ?= ../insight/charts/insight   # sibling checkout; or oci://… once published
-VALUES      ?= environments/$(ENV)/values.yaml
-KUBE_CTX    ?= insight-$(ENV)
-TIMEOUT     ?= 10m
-RENDER_DIR  := .deploy
+ENV              ?= dev
+NAMESPACE        ?= insight
+RELEASE          ?= insight
+CHART            ?= oci://ghcr.io/cyberfabric/charts/insight
+INSIGHT_VERSION  ?= $(shell cat .insight-version)
+VALUES           ?= environments/$(ENV)/values.yaml
+KUBE_CTX         ?= insight-$(ENV)
+TIMEOUT          ?= 10m
+RENDER_DIR       := .deploy
 ```
 
 - All variables are overridable on the command line (`make deploy ENV=stage`).
 - `ENV` controls which values file, which kube-context, which sealed-secrets directory.
+- `INSIGHT_VERSION` defaults to the contents of `.insight-version` at the repo root — the umbrella semver currently pinned for this repo. Override only for ad-hoc one-off renders (`make diff INSIGHT_VERSION=0.1.42`).
 - The `.deploy/` directory is `.gitignore`d and stores the last rendered manifest plus a per-deploy log file.
 
 ### 6.2 Public Targets
@@ -415,25 +450,35 @@ Rationale, one line per check:
 ### 6.4 Deploy Logic
 
 ```make
-.PHONY: deploy
-deploy: sync-clean vpn-up kube-ctx confirm-prod
+.PHONY: deploy-insight
+deploy-insight: sync-clean vpn-up kube-ctx confirm-prod chart-present
 	@mkdir -p $(RENDER_DIR)
-	@helm template $(RELEASE) $(CHART) -n $(NAMESPACE) -f $(VALUES) \
+	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) \
+		-n $(NAMESPACE) -f $(VALUES) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
-	@echo "Rendered to $(RENDER_DIR)/last-render-$(ENV).yaml"
+	@echo "Rendered $(CHART):$(INSIGHT_VERSION) to $(RENDER_DIR)/last-render-$(ENV).yaml"
 	helm upgrade --install $(RELEASE) $(CHART) \
+		--version $(INSIGHT_VERSION) \
 		--namespace $(NAMESPACE) --create-namespace \
 		-f $(VALUES) \
 		--atomic --timeout $(TIMEOUT) \
 		--history-max 10 \
 		| tee $(RENDER_DIR)/deploy-$(ENV)-$$(date -u +%Y%m%d-%H%M%S).log
+
+.PHONY: chart-present
+chart-present:
+	@helm show chart $(CHART) --version $(INSIGHT_VERSION) >/dev/null 2>&1 \
+		|| { echo "ERROR: chart $(CHART):$(INSIGHT_VERSION) not found in registry"; exit 1; }
 ```
 
 Notes:
 
+- `$(CHART)` resolves to `oci://ghcr.io/cyberfabric/charts/insight`; `$(INSIGHT_VERSION)` resolves to the contents of `.insight-version`. Together they uniquely identify the published artifact.
+- `chart-present` fails fast if the OCI tag does not exist — saves the engineer a confusing `helm upgrade` error.
 - `helm template` first lets the engineer abort if the rendered diff looks wrong (a follow-up `make plan` target compares against `kubectl get` to surface the actual cluster diff; out of scope for v0).
 - `--atomic` rolls back on failure; combined with `--timeout 10m` it bounds blast radius.
 - `--history-max 10` keeps Helm's internal release history bounded so `make rollback` always has a target.
+- The top-level `deploy` target orchestrates the per-cluster prerequisites (Airbyte, Argo Workflows) and then calls `deploy-insight`. See the gitops repo's Makefile for the orchestration; only the `deploy-insight` step interacts with the OCI-pinned umbrella chart.
 
 ### 6.5 Sealed Secret Targets
 
@@ -475,36 +520,43 @@ infra/insight-gitops/
 ├── Brewfile
 ├── Makefile
 ├── README.md
-├── .poller.yaml                # service list consumed by scripts/poller.sh
-├── .gitlab-ci.yml              # defines the image-poller scheduled job
+├── .insight-version            # one line: the umbrella semver pin (e.g. 0.1.47)
+├── .poller.yaml                # chart_repository + version_pin_file + auto_envs
+├── .gitlab-ci.yml              # defines the chart-poller scheduled job
 ├── .gitleaks.toml              # secret-scanning rules
+├── base-values/
+│   ├── airbyte-values.yaml     # vendored from cyberfabric/insight at a known SHA
+│   └── argo-values.yaml
+├── bootstrap/
+│   └── argo-rbac.yaml.tmpl     # templated; substituted at apply time
 ├── environments/
 │   ├── dev/
 │   │   ├── values.yaml
+│   │   ├── airbyte-values.yaml
+│   │   ├── argo-values.yaml
 │   │   ├── pub-cert.pem
 │   │   └── sealed-secrets/
 │   │       └── insight/
 │   │           ├── oidc-client-sealedsecret.yaml
 │   │           └── db-creds-sealedsecret.yaml
-│   ├── stage/
-│   │   ├── values.yaml
-│   │   ├── pub-cert.pem
-│   │   └── sealed-secrets/...
-│   └── prod/
+│   └── virtuozzo/
 │       ├── values.yaml
+│       ├── airbyte-values.yaml
+│       ├── argo-values.yaml
 │       ├── pub-cert.pem
 │       └── sealed-secrets/...
 └── scripts/
     ├── poller.sh               # invoked by .gitlab-ci.yml on cron
     ├── doctor.sh               # invoked by `make doctor`
-    └── render-diff.sh          # invoked by `make diff`
+    ├── render-diff.sh          # invoked by `make diff`
+    └── airbyte-setup.sh        # post-install Airbyte setup-wizard automation
 ```
 
 Conventions:
 
-- One `values.yaml` per environment. No further per-service values files at this stage; the umbrella chart already exposes one flat values surface.
+- One `values.yaml` per environment for the umbrella chart, plus one `airbyte-values.yaml` and one `argo-values.yaml` per environment as overlays on top of `base-values/`. The umbrella chart already exposes one flat values surface; per-engine files exist only because Airbyte and Argo Workflows are separate Helm releases.
 - One `pub-cert.pem` per environment because each cluster runs its own sealed-secrets-controller with its own keypair.
-- **The umbrella chart lives in `cyberfabric/insight`, not here.** The gitops repo is settings-only — values, sealed secrets, the Makefile, the poller. The Makefile's `$CHART` variable resolves to either a sibling checkout of `cyberfabric/insight` (`../insight/charts/insight`, the MVP default) or an OCI reference (once chart releases are automated, see [DESIGN.md §1.3](../specs/DESIGN.md)). Engineers run `helm dependency update` in the source repo, not here.
+- **The umbrella chart lives in `cyberfabric/insight` and is published per merge to `oci://ghcr.io/cyberfabric/charts/insight`.** The gitops repo is settings-only — values, sealed secrets, the Makefile, the poller. It does **not** vendor the chart and does **not** require a local checkout of `cyberfabric/insight`. The Makefile pulls the chart from OCI at deploy time, pinned to the version in `.insight-version`.
 
 ## 8. Open Items
 
