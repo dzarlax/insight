@@ -588,3 +588,16 @@ kind = "PRD"
 path = "docs/domain/metric-catalog/specs/PRD.md"
 name = "Metric Catalog PRD"
 traceability = "DOCS-ONLY"
+
+[[systems]]
+name = "Analytics Diagnosis"
+slug = "ana-diag"
+kit = "sdlc"
+codebase = ["docs/domain/analytics-diagnosis"]
+children = []
+
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/domain/analytics-diagnosis/specs/PRD.md"
+name = "Analytics Diagnosis Layer PRD"
+traceability = "DOCS-ONLY"
