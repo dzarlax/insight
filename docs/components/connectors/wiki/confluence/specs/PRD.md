@@ -151,6 +151,7 @@ The wiki data model is document-centric rather than event-centric: Bronze tables
 - Extraction of Confluence spaces with type, status, and URL
 - Extraction of pages with metadata, version number, parent hierarchy, author, and last editor
 - Extraction of version history (edit activity) as per-user per-page per-day edit counts
+- Extraction of footer and inline page comments (top-level + replies for both kinds) — issue #285
 - Extraction of per-user per-page view analytics from the Premium analytics endpoint (graceful degradation when unavailable)
 - Extraction of user directory via `accountId` → email resolution through the Atlassian User API bulk endpoint
 - User directory history preserved with SCD Type 2 (`valid_from`/`valid_to`)
@@ -169,7 +170,6 @@ The wiki data model is document-centric rather than event-centric: Bronze tables
 - Confluence Server/Data Center — this connector targets Confluence Cloud only
 - Page body/content extraction — only metadata and activity metrics are collected
 - Attachment downloads or file metadata
-- Page comments (footer comments and inline comments) — deferred to a future release
 - Blog posts — deferred to a future release
 - Confluence webhooks or event-driven collection
 - Outline connector implementation — separate connector using the same `wiki_*` schema
@@ -217,6 +217,27 @@ The connector **MUST** extract version history for collected pages from `GET /pa
 The connector **MUST** only fetch versions created after the last successful cursor position to avoid re-processing historical versions on incremental runs.
 
 **Rationale**: Version history is the edit log for Confluence — each version represents one save/edit event. Per-user per-day edit counts are the foundation for editorial velocity metrics and contributor activity analysis.
+
+**Actors**: `cpt-insightspec-actor-conf-api`, `cpt-insightspec-actor-conf-analyst`
+
+#### Extract Page Comments (Footer + Inline, with Replies)
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-conf-comment-extraction`
+
+The connector **MUST** extract footer and inline comments for every collected page. Footer comments are page-bottom comments not anchored to specific text. Inline comments are anchored to a highlighted text fragment in the page body.
+
+Both kinds support replies. The Confluence Cloud v2 page-level listing endpoints return only top-level comments — replies **MUST** be retrieved via separate `/{kind}-comments/{id}/children` calls per top-level comment. The connector therefore implements four streams in a 2-level parent-child chain:
+
+1. `wiki_footer_comments` — substream of `wiki_pages` via `GET /pages/{page_id}/footer-comments`
+2. `wiki_footer_comment_replies` — substream of `wiki_footer_comments` via `GET /footer-comments/{comment_id}/children`
+3. `wiki_inline_comments` — substream of `wiki_pages` via `GET /pages/{page_id}/inline-comments`
+4. `wiki_inline_comment_replies` — substream of `wiki_inline_comments` via `GET /inline-comments/{comment_id}/children`
+
+Each comment **MUST** produce one Bronze row with: `comment_id`, `page_id`, `author_id` (Atlassian `accountId`), `created_at` (from `version.createdAt`), and `body_storage` (raw HTML from `body.storage.value`). Top-level rows additionally carry `resolution_status` (`open` / `resolved` / null). Inline top-level rows additionally carry `inline_marker_ref` (UUID anchor inside the page body) and `inline_original_selection` (the highlighted text fragment captured at comment-creation time). Reply rows additionally carry `parent_comment_id` (always populated for replies).
+
+Sync mode is **full refresh** for all four streams: the v2 endpoints don't accept an `updated-after` filter, and comment volumes per page are typically small (tens, not thousands).
+
+**Rationale**: Comments are how reviewers, doc owners, and stakeholders engage with a page after publish. Today's per-edit `wiki_page_activity` undercounts collaboration because someone who comments on others' pages but rarely authors is invisible. Comment data feeds engagement KPIs like "this RFC got 12 comments from 5 reviewers" vs "this RFC was published and ignored". Issue #285.
 
 **Actors**: `cpt-insightspec-actor-conf-api`, `cpt-insightspec-actor-conf-analyst`
 

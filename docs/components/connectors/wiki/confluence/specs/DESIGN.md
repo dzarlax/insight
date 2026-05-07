@@ -94,12 +94,18 @@ Every emitted record includes `tenant_id`, `source_id`, and `unique_key` (patter
 |  Confluence Connector (Airbyte DeclarativeSource YAML manifest)           |
 |  +-- wiki_spaces stream (full refresh, GET /wiki/api/v2/spaces)           |
 |  +-- wiki_pages stream (incremental, GET /wiki/api/v2/pages)              |
-|  |   +-- wiki_page_versions substream (per-page /versions)                |
+|      +-- wiki_page_versions substream (per-page /versions)                |
+|      +-- wiki_footer_comments substream (per-page /footer-comments)       |
+|      |   +-- wiki_footer_comment_replies (per-comment /children)          |
+|      +-- wiki_inline_comments substream (per-page /inline-comments)       |
+|          +-- wiki_inline_comment_replies (per-comment /children)          |
 +-------------------------------------+-------------------------------------+
                                       | Airbyte Protocol (RECORD, STATE, LOG)
 +-------------------------------------v-------------------------------------+
 |  Bronze Tables (ClickHouse - ReplacingMergeTree)                          |
-|  wiki_spaces, wiki_pages, wiki_page_versions                              |
+|  wiki_spaces, wiki_pages, wiki_page_versions,                             |
+|  wiki_footer_comments, wiki_footer_comment_replies,                       |
+|  wiki_inline_comments, wiki_inline_comment_replies                        |
 |  (all with data_source = 'insight_confluence')                            |
 +---------------------------------------------------------------------------+
 ```
@@ -219,11 +225,11 @@ The single declarative YAML manifest (`connector.yaml`) defines all streams, aut
 
 ##### Responsibility scope
 
-- Defines all stream configurations: `wiki_spaces`, `wiki_pages`, `wiki_page_versions`.
+- Defines all stream configurations: `wiki_spaces`, `wiki_pages`, `wiki_page_versions`, `wiki_footer_comments`, `wiki_footer_comment_replies`, `wiki_inline_comments`, `wiki_inline_comment_replies`.
 - Configures `BasicHttpAuthenticator` with Basic Auth (`email:api_token` base64-encoded).
 - Configures `CursorPagination` for all v2 endpoints (cursor-based via `_links.next`).
 - Configures `DatetimeBasedCursor` on `updated_at` field (mapped from `version.createdAt`) for incremental sync with `is_client_side_incremental: true`.
-- Configures `SubstreamPartitionRouter` for `wiki_page_versions` (parent-child stream pattern per page).
+- Configures `SubstreamPartitionRouter` for parent-child stream patterns: `wiki_page_versions` and the two top-level comment streams hang off `wiki_pages`; the two reply streams hang off their respective top-level comment streams (2-level chain).
 - Configures `AddFields` transformations for `tenant_id`, `source_id`, `unique_key`, and `data_source` injection on every record.
 - Defines the connection specification (config schema) in the `spec` section.
 
@@ -699,7 +705,6 @@ Same chain applies to `wiki_pages.last_editor_id` and `wiki_page_versions.author
 | No `confluence_collection_runs` table | Sync monitoring via Airbyte platform only | Custom run tracking if needed beyond Airbyte platform capabilities |
 | No `wiki_users` stream | wiki_users stream NOT implemented in Phase 1. Confluence v2 API has no batch user lookup or list-all-users endpoint suitable for declarative manifests. User identity resolution happens in Silver via JOIN with `jira_user` (shared Atlassian accountId namespace) | Phase 2: User API bulk resolution via `GET /wiki/rest/api/user/bulk`; Silver: JOIN with `jira_user` |
 | No blog post extraction | Blog posts (`GET /blogposts`) excluded from scope | Future v1.1 extension using same schema |
-| No page comments | Footer and inline comments excluded from scope | Future iteration via `GET /pages/{id}/footer-comments` |
 | No space filtering on pages endpoint | `confluence_space_keys` config field removed from Phase 1 -- declared but never referenced by any stream. All visible spaces are synced | Re-introduce in future iteration if per-space page requests are implemented |
 | URN-based surrogate key not implemented | Not generated at connector level | Deferred to Silver/dbt or future connector iteration |
 | `confluence_start_date` config deviation | `confluence_start_date` config field deviates from Connector Framework SS4.4 (which says start dates should be computed, not configured). This is intentional: Confluence v2 API has no `lastModifiedAfter` parameter, so client-side incremental filtering relies on a configurable start date for the initial sync. Subsequent runs use Airbyte STATE | N/A -- intentional deviation |
