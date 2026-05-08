@@ -83,7 +83,8 @@ The deployment system has four explicit goals:
 +--------------------+   +--+----------------+               |
                          |                   |               |
                          | Kubernetes (VPN)  |               |
-                         | dev / stage / prod|               |
+                         | dev / stage /     |               |
+                         | virtuozzo / …     |               |
                          +-------------------+               |
                                                              |
                          +-------------------+   reads       |
@@ -163,7 +164,7 @@ The deployment artifact is the umbrella Helm chart, published per merge to `oci:
 | Subchart `version` | same `Chart.yaml` | semver | PR author, only when subchart templates change. |
 | Umbrella `version` | `charts/insight/Chart.yaml` | semver, patch per publish, minor on shape change | CI per merge to `main`. |
 | Umbrella `appVersion` | same `Chart.yaml` | image tag of the publishing CI run | CI per merge to `main`. Display only. |
-| Gitops pin | `infra/insight-gitops/.insight-version` | one line, umbrella semver, e.g. `0.1.47` | poller (auto for `dev`); engineer MR (for `virtuozzo`). |
+| Gitops pin | `infra/insight-gitops/.insight-version` | one line, umbrella semver, e.g. `0.1.47` | poller (auto for `dev`); engineer MR (for any non-dev env, e.g. `stage`, `virtuozzo`, `constructor`, `acronis`). |
 
 Rules that follow from this:
 
@@ -246,7 +247,7 @@ Behaviour:
 - Strict semver regex on the tag listing. Pre-release tags or anything off-format is ignored.
 - One commit per poll run when the pin moves; nothing committed when no new version exists.
 - Commits are authored by a service account (`infra-poller@cyberfabric.local`) with a deploy key scoped to push to `main` of `infra/insight-gitops` only.
-- The poller acts only on environments listed in `auto_envs` of `.poller.yaml`. `dev` is included; `virtuozzo` is **not** auto-polled — those bumps are PR'd by an engineer, see [§3.4](#34-engineer-pulls-and-deploys).
+- The poller acts only on environments listed in `auto_envs` of `.poller.yaml`. `dev` is included; non-dev envs (the internal `stage`/`test` clusters and every customer-named production cluster — `virtuozzo`, `constructor`, `acronis`, …) are **not** auto-polled, those bumps are PR'd by an engineer, see [§3.4](#34-engineer-pulls-and-deploys).
 - The poller does not write to per-environment values files. Image tags in env values are expected to be empty (the chart's per-subchart `appVersion` flows through). Hotfix-style explicit `image.tag` overrides are an engineer-authored MR, never a poller action.
 - A failed `git push` (e.g. someone else pushed a manual change in the same hour) retries with `git pull --rebase` once; on a second failure it leaves the repo dirty and surfaces a CI failure.
 
@@ -263,11 +264,11 @@ A deploy is always initiated by a human at a workstation. Steps:
 5. **Apply** — `helm upgrade --install insight $CHART --version $(cat .insight-version) -n insight -f environments/${ENV}/values.yaml`, where `$CHART = oci://ghcr.io/cyberfabric/charts/insight`. The chart is pulled from GHCR at deploy time; the gitops repo does **not** vendor it — see [§7](#7-repository-layout-target). The Makefile passes `--atomic --timeout 10m` so a failed deploy is rolled back automatically.
 6. **Verify** — `make status ENV=dev` runs `kubectl rollout status` for each deployment + `helm test` for smoke tests.
 
-For `stage` and `prod`:
+For every non-`dev` environment — both the internal `test` and `stage` clusters and every customer-named production cluster (`virtuozzo`, `constructor`, `acronis`, …; one entry per customer install, no generic "prod"):
 
-- The poller does not auto-bump tags. An engineer opens a merge request that bumps `environments/stage/...` or `environments/prod/...` with the desired tag (typically copied from the most recent green `dev` deploy).
-- After review and merge, the engineer runs `make deploy ENV=stage` or `ENV=prod` from their workstation.
-- `make deploy ENV=prod` requires an additional `CONFIRM=yes-deploy-prod` flag (see [§6.2](#62-public-targets)) so a typo on a sleepy morning does not push to production.
+- The poller does not auto-bump the chart pin. An engineer opens a merge request that bumps `environments/<env>/.insight-version` (or the umbrella values file) to the desired version (typically the one currently green on `dev`).
+- After review and merge, the engineer runs `make deploy ENV=<env>` from their workstation.
+- For environments listed in the Makefile's `PROTECTED_ENVS` (every customer cluster; internal `test`/`stage` are at the team's discretion), `make deploy` requires an additional `CONFIRM=yes-deploy-<env>` flag — e.g. `CONFIRM=yes-deploy-virtuozzo` — so a typo on a sleepy morning does not push to a customer cluster. See [§6.2](#62-public-targets) and [§6.3](#63-pre-flight-safety-checks) for the safety check.
 
 ## 4. Security Implementation
 
@@ -355,14 +356,14 @@ A `Brewfile` at the repo root captures these dependencies; `make doctor` runs `b
 - **GitHub** — read access to `cyberfabric/insight` (public) is enough for clones; pushes are protected and only the CI workflow's `GITHUB_TOKEN` can publish images.
 - **GitLab** — engineer authenticates with SSH key (`gitlab.cyberfabric.internal`); the deploy-key for the poller is separate and lives only in the GitLab CI variables store.
 - **GHCR** — pulls are public; the cluster's image-pull secret is only needed if the team flips an image to private later. The pull secret itself is a sealed secret in the repo.
-- **Kubernetes** — engineer's kubeconfig is generated by the corporate IdP; per-cluster contexts are named `insight-dev`, `insight-stage`, `insight-prod`. The Makefile checks `kubectl config current-context` against the requested `ENV` before any apply.
+- **Kubernetes** — engineer's kubeconfig is generated by the corporate IdP; per-cluster contexts follow `insight-<env>` (e.g. `insight-dev`, `insight-stage`, `insight-virtuozzo`, `insight-constructor`). The Makefile checks `kubectl config current-context` against the requested `ENV` before any apply.
 - **Passbolt** — `passbolt configure` is run once per workstation: it asks for the server URL, the user's private GPG key file, and the key passphrase. Subsequent `passbolt resource get` invocations decrypt via the local GPG agent; the passphrase is cached in the OS keychain for the agent's TTL.
 
 ### 5.3 VPN and Cluster Access
 
 - All Kubernetes API endpoints resolve only when the corporate VPN is up. The Makefile's pre-flight runs `kubectl --request-timeout=5s cluster-info` and aborts with "VPN not connected?" if the call fails.
 - DNS for `*.cyberfabric.internal` is split-horizon: workstations on VPN see internal addresses; off-VPN they see nothing. The poller's GitLab runner is permanently in-network.
-- There is **no** ingress from public networks to either GitLab or the clusters. A compromise of GHCR yields only the ability to publish a malformed image, which would still need to be picked up by the poller and approved by an engineer for stage/prod.
+- There is **no** ingress from public networks to either GitLab or the clusters. A compromise of GHCR yields only the ability to publish a malformed image, which would still need to be picked up by the poller and approved by an engineer for any non-`dev` env.
 
 ## 6. Makefile Specifications
 
@@ -394,7 +395,7 @@ RENDER_DIR       := .deploy
 | `make doctor` | Verify required tooling and auth. | none | Read-only checks; prints status. |
 | `make sync` | `git fetch && git pull --ff-only origin main`. | none | Updates local repo to match `origin/main`. |
 | `make diff` | Show poller commits since last deploy and rendered-manifest diff. | `sync-clean` | Read-only. Prints commit list and `helm template` diff. |
-| `make deploy` | Apply the chart to the cluster. | `sync-clean`, `vpn-up`, `kube-ctx`, `(prod) confirm` | `helm upgrade --install --atomic`. |
+| `make deploy` | Apply the chart to the cluster. | `sync-clean`, `vpn-up`, `kube-ctx`, `confirm` (only fires for envs in `PROTECTED_ENVS`) | `helm upgrade --install --atomic`. |
 | `make rollback` | Roll back to the previous Helm revision. | `vpn-up`, `kube-ctx` | `helm rollback`. |
 | `make status` | Show release status and rollout health. | `vpn-up`, `kube-ctx` | Read-only. |
 | `make tag` | Tag the deploy commit as `deploy-…`. | `sync-clean` | Local + remote git tag. Optional. |
@@ -428,10 +429,19 @@ kube-ctx:
 		echo "       run: kubectl config use-context $(KUBE_CTX)"; \
 		exit 1; fi
 
-.PHONY: confirm-prod
-confirm-prod:
-	@if [ "$(ENV)" = "prod" ] && [ "$(CONFIRM)" != "yes-deploy-prod" ]; then \
-		echo "ERROR: production deploy requires CONFIRM=yes-deploy-prod"; exit 1; fi
+# PROTECTED_ENVS is the list of customer-named production clusters
+# (and any internal env the team wants gated). Add new entries as
+# customers come online — virtuozzo, constructor, acronis, …
+PROTECTED_ENVS := virtuozzo
+
+.PHONY: confirm
+confirm:
+	@if echo " $(PROTECTED_ENVS) " | grep -q " $(ENV) "; then \
+		EXPECTED="yes-deploy-$(ENV)"; \
+		if [ "$(CONFIRM)" != "$$EXPECTED" ]; then \
+			echo "ERROR: deploy to '$(ENV)' requires CONFIRM=$$EXPECTED"; \
+			exit 1; fi; \
+	fi
 
 .PHONY: passbolt-configured
 passbolt-configured:
@@ -443,15 +453,15 @@ Rationale, one line per check:
 
 - `sync-clean` rejects ambiguous state. The cluster must reflect a known commit.
 - `vpn-up` makes "wrong network" a clean error rather than a 10-minute Helm timeout.
-- `kube-ctx` prevents the worst class of accident: deploying `prod` values into the `dev` cluster (or vice versa) because the context was left selected from a previous task.
-- `confirm-prod` is a deliberately ugly flag. If you can type `CONFIRM=yes-deploy-prod`, you have looked at it.
+- `kube-ctx` prevents the worst class of accident: deploying customer values into the wrong cluster (or `dev` values into a customer cluster) because the context was left selected from a previous task.
+- `confirm` is a deliberately ugly flag, scoped per env. If you can type `CONFIRM=yes-deploy-virtuozzo`, you have looked at it. Each customer cluster requires its own token (`yes-deploy-constructor`, `yes-deploy-acronis`, …) so muscle memory does not carry across customers.
 - `passbolt-configured` is checked at the start of `seal-secret` rather than inside the pipe so the failure message is clear.
 
 ### 6.4 Deploy Logic
 
 ```make
 .PHONY: deploy-insight
-deploy-insight: sync-clean vpn-up kube-ctx confirm-prod chart-present
+deploy-insight: sync-clean vpn-up kube-ctx confirm chart-present
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) \
 		-n $(NAMESPACE) -f $(VALUES) \
@@ -530,7 +540,7 @@ infra/insight-gitops/
 ├── bootstrap/
 │   └── argo-rbac.yaml.tmpl     # templated; substituted at apply time
 ├── environments/
-│   ├── dev/
+│   ├── dev/                       # internal — auto-bumped by the poller
 │   │   ├── values.yaml
 │   │   ├── airbyte-values.yaml
 │   │   ├── argo-values.yaml
@@ -539,12 +549,16 @@ infra/insight-gitops/
 │   │       └── insight/
 │   │           ├── oidc-client-sealedsecret.yaml
 │   │           └── db-creds-sealedsecret.yaml
-│   └── virtuozzo/
-│       ├── values.yaml
-│       ├── airbyte-values.yaml
-│       ├── argo-values.yaml
-│       ├── pub-cert.pem
-│       └── sealed-secrets/...
+│   ├── stage/                     # internal — promote-by-MR (optional)
+│   │   └── …                      # same shape as dev/
+│   ├── virtuozzo/                 # customer prod — promote-by-MR + confirm token
+│   │   ├── values.yaml
+│   │   ├── airbyte-values.yaml
+│   │   ├── argo-values.yaml
+│   │   ├── pub-cert.pem
+│   │   └── sealed-secrets/...
+│   └── <other-customer>/          # one dir per customer install (constructor, acronis, …)
+│       └── …                      # same shape
 └── scripts/
     ├── poller.sh               # invoked by .gitlab-ci.yml on cron
     ├── doctor.sh               # invoked by `make doctor`
@@ -563,7 +577,7 @@ Conventions:
 These are accepted gaps that do not block the MVP but must be tracked.
 
 - **Public certificate rotation.** The sealed-secrets-controller rotates its keypair periodically; when it does, the committed `pub-cert.pem` files go stale and previously sealed secrets continue to decrypt (old keys are kept), but new ones must be sealed against the new cert. Procedure: `kubeseal --fetch-cert > environments/<env>/pub-cert.pem`, commit, re-seal any in-flight changes. A scheduled monthly check is appropriate; not yet automated.
-- **`stage` and `prod` poller policy.** Currently only `dev` is auto-bumped. The team may want a "dry-run" poller for higher environments that opens a merge request rather than committing to `main`. Captured but not yet designed.
+- **Promotion-MR poller for non-`dev` envs.** Currently only `dev` is auto-bumped. For internal `stage`/`test` and every customer-named cluster (`virtuozzo`, `constructor`, `acronis`, …), the team may want a "dry-run" poller that opens a merge request rather than committing to `main`. Captured but not yet designed.
 - **Migration to in-cluster ArgoCD.** The Makefile-driven manual deploy is an MVP shortcut. Once a managed ArgoCD instance is provisioned inside the corporate network, the same `infra/insight-gitops` repo becomes its source. The contract (one `values.yaml` per environment, sealed secrets per namespace) is designed to survive that migration unchanged; only the trigger mechanism changes from `make deploy` to ArgoCD reconciliation.
 - **Artifact signing (images + chart).** Neither GHCR images nor the umbrella Helm chart at `oci://ghcr.io/cyberfabric/charts/insight` are signed today. The deploy admits any image tag the poller resolves and any chart version `.insight-version` pins. Follow-up: cosign-sign both at publish time, have `make chart-present` verify the chart signature before allowing deploy, and add `cosign verify` to the cluster admission policy for images.
 - **Audit log of deploys.** `make deploy` writes a local log file; there is no central audit. A trivial follow-up posts the log to a `#deploys` Slack channel via the poller's bot token; deferred until the team needs it.
