@@ -684,6 +684,37 @@ streams:
           $select: id,userPrincipalName,displayName,mail,accountEnabled
           $filter: accountEnabled eq true
         url: https://graph.microsoft.com/v1.0/users
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+          response_filters:
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes: [429]
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [403]
+              error_message: >-
+                HTTP 403 from GET /users — the Azure AD app lacks the
+                `User.Read.All` Application permission (admin consent
+                required). The calendar_events substream depends on
+                this directory and will not run until the scope is
+                granted. Fix: Azure AD → App registrations → <this
+                app> → API permissions → Microsoft Graph → Application
+                permissions → User.Read.All → Grant admin consent.
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401]
+              error_message: >-
+                HTTP 401 from GET /users — token rejected. Check
+                azure_client_id / azure_client_secret in the connector
+                Secret, and verify azure_tenant_id matches the tenant
+                that issued the app registration.
     primary_key:
       - id
     schema_loader:
@@ -766,6 +797,45 @@ streams:
         url: >-
           https://graph.microsoft.com/v1.0/users/{{ stream_partition.user_id
           }}/calendarView
+        error_handler:
+          type: DefaultErrorHandler
+          backoff_strategies:
+            - type: WaitTimeFromHeader
+              header: Retry-After
+          response_filters:
+            - type: HttpResponseFilter
+              action: RATE_LIMITED
+              http_codes: [429]
+            - type: HttpResponseFilter
+              action: RETRY
+              http_codes: [503]
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [403]
+              error_message: >-
+                HTTP 403 from GET /users/{id}/calendarView — the Azure
+                AD app lacks the `Calendars.Read` Application permission
+                (admin consent required). This stream cannot run without
+                it; other m365 streams are unaffected. Fix: Azure AD →
+                App registrations → <this app> → API permissions →
+                Microsoft Graph → Application permissions →
+                Calendars.Read → Grant admin consent. Note for ops:
+                many security teams will NOT approve this scope (it
+                grants tenant-wide read of every user's calendar) — if
+                that is the case, disable the calendar_events stream in
+                the configured catalog rather than letting it fail every
+                sync. The downstream silver classes class_meeting_invite
+                and class_meeting / class_meeting_attendance (calendar
+                joins) will then produce zero rows, which is the
+                intended graceful degradation.
+            - type: HttpResponseFilter
+              action: FAIL
+              http_codes: [401]
+              error_message: >-
+                HTTP 401 from GET /users/{id}/calendarView — token
+                rejected. Same root cause as for the users stream
+                (auth misconfig). Check azure_client_id /
+                azure_client_secret and azure_tenant_id.
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
