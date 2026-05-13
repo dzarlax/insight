@@ -449,6 +449,25 @@ There is no implemented source-emitted run log stream.
 - Some schema fields remain source-pass-through and may be null depending on payload quality
 - The specification intentionally mirrors the current manifest rather than a more ambitious future runtime
 
+### Silver-layer duration semantics (issue #263)
+
+The Zoom feeder `zoom__collab_meeting_activity` writes into the cross-vendor `silver.class_collab_meeting_activity` class alongside the M365 (Teams) feeder. The two sources produce columns with the **same names but different precision** for the three duration measures, and consumers MUST understand the asymmetry:
+
+| Column | M365 (Teams) | Zoom |
+|---|---|---|
+| `audio_duration_seconds` | Exact minute-of-audio per user per day (Microsoft Graph `audioDuration`). | Session length (`join → leave`). Joining a Zoom meeting implies an audio connection; the Zoom API does not expose "mic-on" minute-of-X data. |
+| `video_duration_seconds` | Exact minute-of-video (`videoDuration`). | Session length gated by the per-participant `camera` device name being populated (NULL/'' → no camera used). Binary "did the user turn the camera on at any point" — over-estimates true minute-of-video. Note: `participants.video_connection_type` is the network transport (Reliable UDP / P2P / TCP), not a camera-on flag. |
+| `screen_share_duration_seconds` | Exact minute-of-screen-share (`screenShareDuration`). | Session length gated by any of `share_desktop` / `share_application` / `share_whiteboard` per-participant flags. Same over-estimate caveat. |
+
+**Why the asymmetry**: the Zoom Dashboard / Reports / Participants APIs we use here do **not** expose per-participant minute-of-video or minute-of-screen-share. The only signals available at the participant grain are the binary engagement flags above. The previous implementation (PR #258 era) gated on `meeting.has_video` — a meeting-level flag — which was strictly worse because it attributed full session length to every participant whenever ANY participant in the room had video on. Per-participant flags (current implementation, fixed in this issue) are the strictest correctness we can achieve without a new API.
+
+**True minute-of-video parity** would require the Zoom Dashboard QoS endpoint (`/metrics/meetings/{id}/participants/qos`), which is a paid-tier endpoint with separate rate-limit budget and a per-minute sampling output. Implementing this is a follow-up to #263.
+
+**Downstream guidance**:
+- Cross-vendor aggregates that SUM `video_duration_seconds` across `data_source IN ('insight_m365', 'insight_zoom')` should be labelled as an over-estimate of true engagement.
+- Ratios like `video_duration_seconds / audio_duration_seconds` (engagement intensity) are NOT comparable across vendors — for Teams this is a true ratio; for Zoom it is "fraction of sessions where the camera was ever on" capped at 1.0.
+- A defensive dbt test (`assert_meeting_duration_caps`) asserts `video / screen-share ≤ audio` at the per-user-day grain — both vendors should satisfy this by construction.
+
 ## 5. Traceability
 
 | Artifact | Role |

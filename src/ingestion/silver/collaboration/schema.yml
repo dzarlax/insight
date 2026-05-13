@@ -58,6 +58,45 @@ models:
         description: "Source discriminator: insight_m365 | insight_zoom"
         tests:
           - not_null
+      - name: audio_duration_seconds
+        description: >
+          Seconds the participant spent with audio active.
+          • insight_m365  → Microsoft Graph reports `audioDuration` per
+            user per day. Exact minute-of-audio.
+          • insight_zoom  → session length (join → leave). Zoom does not
+            distinguish "mic on" vs "joined": joining implies an audio
+            connection. Equivalent to "time in meeting".
+      - name: video_duration_seconds
+        description: >
+          Seconds the participant spent with video active. **Different
+          precision per source — see #263.**
+          • insight_m365  → Microsoft Graph reports `videoDuration` per
+            user per day. Exact minute-of-video.
+          • insight_zoom  → session length, gated by the per-participant
+            `camera` device name being populated in the Zoom participants
+            payload (NULL/'' means no camera was used in the session).
+            This is binary "did the user turn the camera on at any point
+            during the session" — it does NOT track minute-of-video. A
+            participant who turned on the camera for 1 minute of a
+            60-minute session contributes video_duration_seconds = 3600
+            (OVER-ESTIMATE). Note that `participants.video_connection_type`
+            is the network transport (Reliable UDP / P2P / ...) and is
+            NOT a camera-on indicator. True
+            minute-of-video parity with Teams would require the Zoom
+            Dashboard QoS endpoint (paid tier, separate stream).
+            Cross-vendor aggregates (sum across both data_sources) are
+            NOT directly comparable.
+      - name: screen_share_duration_seconds
+        description: >
+          Seconds the participant spent screen-sharing. **Same per-source
+          tradeoff as video_duration_seconds — see #263.**
+          • insight_m365  → Microsoft Graph reports `screenShareDuration`
+            per user per day. Exact minute-of-share.
+          • insight_zoom  → session length, gated by ANY of the
+            per-participant `share_desktop` / `share_application` /
+            `share_whiteboard` flags being true. Binary "did the user
+            share at any point" — same over-estimate caveat as
+            video_duration_seconds.
 
   - name: class_collab_email_activity
     description: "Unified daily email activity per user (M365 Outlook)"

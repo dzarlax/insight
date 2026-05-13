@@ -18,6 +18,46 @@
 --   2. Anonymous participants can't be joined to identity at the Silver layer
 --      anyway, so they add noise without enabling any downstream use case.
 -- If Zoom ever starts exposing a stable participant_id/user_id, switch to that.
+--
+-- Duration semantics (issue #263 — tradeoff):
+--
+-- M365's getTeamsUserActivityUserDetail report exposes true minute-of-video
+-- and minute-of-screenshare per user per day. Zoom does NOT — no Dashboard /
+-- Reports endpoint we can call here returns per-participant video duration.
+-- The participant payload we have in bronze carries only "did this user use
+-- video / share at all during the session" signals:
+--
+--   p.camera             Nullable(String)  -- camera device name. NULL/'' when
+--                                             no camera was used (mic-only join).
+--                                             Empirically ≈26% non-NULL — the
+--                                             real "user had video on" signal.
+--                                             Caveat: `p.video_connection_type`
+--                                             is the network transport (Reliable
+--                                             UDP / P2P / TCP / ...) and is
+--                                             populated for ~99% of rows — it
+--                                             is NOT a camera-on flag.
+--   p.share_desktop      Nullable(Bool)
+--   p.share_application  Nullable(Bool)
+--   p.share_whiteboard   Nullable(Bool)
+--
+-- We use those signals to gate the session length, so a participant who never
+-- turned on the camera contributes video_duration_seconds=0 (matching the
+-- Teams semantics directionally). The previous implementation used the
+-- MEETING-level `m.has_video` flag, which counted the full session for every
+-- participant of a meeting where ANY participant had video — a strictly
+-- worse approximation.
+--
+-- Known limitation that this fix does NOT eliminate: if a Zoom participant
+-- turned the camera on for one minute and then off for the remaining 59,
+-- their `camera` device name is still populated for the session and their
+-- full session length is attributed to `video_duration_seconds`. Zoom rows
+-- therefore still OVER-ESTIMATE video / screen-share duration vs the true
+-- minute-of-X numbers M365 produces. Cross-vendor aggregates that sum
+-- `video_duration_seconds` across Zoom and M365 are NOT directly comparable.
+--
+-- True minute-of-video parity would require the Zoom Dashboard QoS endpoint
+-- (`/metrics/meetings/{id}/participants/qos`) — paid tier, separate stream,
+-- new rate-limit budget. Tracked as a follow-up to #263.
 
 SELECT
     p.tenant_id,
@@ -45,27 +85,32 @@ SELECT
            dateDiff('second', parseDateTimeBestEffort(p.join_time), parseDateTimeBestEffort(p.leave_time)),
            0)
     )) AS audio_duration_seconds,
+    -- #263: gate by per-participant `camera` device name (NULL/'' means
+    -- the participant did not use a camera in this session), not by the
+    -- meeting-level `m.has_video` flag. See header for the over-estimate
+    -- caveat (any-video-ever-in-session counts the whole session).
     toInt64(sumIf(
         if(p.join_time IS NOT NULL AND p.leave_time IS NOT NULL,
            dateDiff('second', parseDateTimeBestEffort(p.join_time), parseDateTimeBestEffort(p.leave_time)),
            0),
-        m.has_video = true
+        p.camera IS NOT NULL AND p.camera != ''
     )) AS video_duration_seconds,
     toInt64(sumIf(
         if(p.join_time IS NOT NULL AND p.leave_time IS NOT NULL,
            dateDiff('second', parseDateTimeBestEffort(p.join_time), parseDateTimeBestEffort(p.leave_time)),
            0),
-        m.has_screen_share = true
+        coalesce(p.share_desktop, false)
+        OR coalesce(p.share_application, false)
+        OR coalesce(p.share_whiteboard, false)
     )) AS screen_share_duration_seconds,
     CAST(NULL AS Nullable(String)) AS report_period,
     now() AS collected_at,
     'insight_zoom' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version
 FROM {{ source('bronze_zoom', 'participants') }} p
-LEFT JOIN {{ source('bronze_zoom', 'meetings') }} m
-    ON p.meeting_uuid = m.uuid
-    AND p.tenant_id = m.tenant_id
-    AND p.source_id = m.source_id
+-- The previous LEFT JOIN to bronze_zoom.meetings (for m.has_video /
+-- m.has_screen_share) is no longer needed — gating now happens on
+-- per-participant flags from bronze_zoom.participants itself.
 WHERE p.join_time IS NOT NULL
   AND p.email IS NOT NULL
   AND p.email != ''
