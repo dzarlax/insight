@@ -128,6 +128,100 @@ definitions:
       collected_at: {type: ["string", "null"]}
     additionalProperties: true
 
+  # Comments (issue #285): four streams in a 2x2 matrix.
+  #   footer vs inline   — kind of comment (page-bottom vs highlight-anchored)
+  #   top-level vs reply — page-level listing endpoints return ONLY top-level
+  #                        comments. Replies are fetched via a separate
+  #                        /{kind}-comments/{id}/children endpoint per
+  #                        top-level comment.
+  # All four schemas share a common base; inline top-level adds the highlight
+  # anchor fields; reply schemas carry parent_comment_id.
+  wiki_footer_comments_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      comment_id: {type: ["string", "null"]}
+      page_id: {type: ["string", "null"]}
+      author_id: {type: ["string", "null"]}
+      created_at: {type: ["string", "null"]}
+      body_storage: {type: ["string", "null"]}
+      resolution_status: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
+  wiki_footer_comment_replies_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      comment_id: {type: ["string", "null"]}
+      page_id: {type: ["string", "null"]}
+      parent_comment_id: {type: ["string", "null"]}
+      author_id: {type: ["string", "null"]}
+      created_at: {type: ["string", "null"]}
+      body_storage: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
+  wiki_inline_comments_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      comment_id: {type: ["string", "null"]}
+      page_id: {type: ["string", "null"]}
+      author_id: {type: ["string", "null"]}
+      created_at: {type: ["string", "null"]}
+      body_storage: {type: ["string", "null"]}
+      resolution_status: {type: ["string", "null"]}
+      inline_marker_ref: {type: ["string", "null"]}
+      inline_original_selection: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
+  wiki_inline_comment_replies_schema:
+    type: object
+    $schema: http://json-schema.org/schema#
+    required:
+      - unique_key
+      - tenant_id
+      - source_id
+    properties:
+      unique_key: {type: ["string", "null"]}
+      tenant_id: {type: ["string", "null"]}
+      source_id: {type: ["string", "null"]}
+      data_source: {type: ["string", "null"]}
+      comment_id: {type: ["string", "null"]}
+      page_id: {type: ["string", "null"]}
+      parent_comment_id: {type: ["string", "null"]}
+      author_id: {type: ["string", "null"]}
+      created_at: {type: ["string", "null"]}
+      body_storage: {type: ["string", "null"]}
+      collected_at: {type: ["string", "null"]}
+    additionalProperties: true
+
 streams:
   - type: DeclarativeStream
     name: wiki_spaces
@@ -310,6 +404,251 @@ streams:
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ stream_partition.page_id }}-{{ record['number'] }}
 
+  # ─── Comments (issue #285) ────────────────────────────────────────────
+  # Streams 4, 5, 6, 7 — top-level + replies for both footer and inline
+  # comments. Replies require a separate API call per top-level comment
+  # because the page-level listing endpoints don't include them; this is
+  # implemented as a 2-level SubstreamPartitionRouter chain
+  # (wiki_pages → top-level comments → replies).
+
+  - type: DeclarativeStream
+    name: wiki_footer_comments
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/wiki_footer_comments_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: page_id
+            partition_field: page_id
+            stream:
+              $ref: "#/streams/1"
+      requester:
+        $ref: "#/definitions/base_requester"
+        path: /wiki/api/v2/pages/{{ stream_partition.page_id }}/footer-comments
+        request_parameters:
+          limit: "{{ config.get('confluence_page_size', 100) }}"
+          body-format: storage
+      paginator:
+        $ref: "#/definitions/confluence_paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - results
+    transformations:
+      - $ref: "#/definitions/add_fields"
+      - type: AddFields
+        fields:
+          - path: [comment_id]
+            value: "{{ record['id'] }}"
+          - path: [page_id]
+            value: "{{ stream_partition.page_id }}"
+          - path: [author_id]
+            value: "{{ (record.get('version', {}) or {}).get('authorId', '') }}"
+          - path: [created_at]
+            value: "{{ (record.get('version', {}) or {}).get('createdAt', '') }}"
+          - path: [body_storage]
+            value: >-
+              {{ (record.get('body', {}) or {}).get('storage', {}).get('value', '') }}
+          - path: [resolution_status]
+            value: "{{ record.get('resolutionStatus', '') }}"
+          - path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  - type: DeclarativeStream
+    name: wiki_footer_comment_replies
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/wiki_footer_comment_replies_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: comment_id
+            partition_field: parent_comment_id
+            stream:
+              $ref: "#/streams/3"
+      requester:
+        $ref: "#/definitions/base_requester"
+        path: /wiki/api/v2/footer-comments/{{ stream_partition.parent_comment_id }}/children
+        request_parameters:
+          limit: "{{ config.get('confluence_page_size', 100) }}"
+          body-format: storage
+      paginator:
+        $ref: "#/definitions/confluence_paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - results
+    transformations:
+      - $ref: "#/definitions/add_fields"
+      - type: AddFields
+        fields:
+          - path: [comment_id]
+            value: "{{ record['id'] }}"
+          - path: [page_id]
+            value: "{{ record.get('pageId', '') }}"
+          - path: [parent_comment_id]
+            value: "{{ stream_partition.parent_comment_id }}"
+          - path: [author_id]
+            value: "{{ (record.get('version', {}) or {}).get('authorId', '') }}"
+          - path: [created_at]
+            value: "{{ (record.get('version', {}) or {}).get('createdAt', '') }}"
+          - path: [body_storage]
+            value: >-
+              {{ (record.get('body', {}) or {}).get('storage', {}).get('value', '') }}
+          - path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  - type: DeclarativeStream
+    name: wiki_inline_comments
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/wiki_inline_comments_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: page_id
+            partition_field: page_id
+            stream:
+              $ref: "#/streams/1"
+      requester:
+        $ref: "#/definitions/base_requester"
+        path: /wiki/api/v2/pages/{{ stream_partition.page_id }}/inline-comments
+        request_parameters:
+          limit: "{{ config.get('confluence_page_size', 100) }}"
+          body-format: storage
+      paginator:
+        $ref: "#/definitions/confluence_paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - results
+    transformations:
+      - $ref: "#/definitions/add_fields"
+      - type: AddFields
+        fields:
+          - path: [comment_id]
+            value: "{{ record['id'] }}"
+          - path: [page_id]
+            value: "{{ stream_partition.page_id }}"
+          - path: [author_id]
+            value: "{{ (record.get('version', {}) or {}).get('authorId', '') }}"
+          - path: [created_at]
+            value: "{{ (record.get('version', {}) or {}).get('createdAt', '') }}"
+          - path: [body_storage]
+            value: >-
+              {{ (record.get('body', {}) or {}).get('storage', {}).get('value', '') }}
+          - path: [resolution_status]
+            value: "{{ record.get('resolutionStatus', '') }}"
+          - path: [inline_marker_ref]
+            value: >-
+              {{ (record.get('properties', {}) or {}).get('inlineMarkerRef', '') }}
+          - path: [inline_original_selection]
+            value: >-
+              {{ (record.get('properties', {}) or {}).get('inlineOriginalSelection', '') }}
+          - path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
+  - type: DeclarativeStream
+    name: wiki_inline_comment_replies
+    primary_key:
+      - unique_key
+    supported_sync_modes:
+      - full_refresh
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $ref: "#/definitions/wiki_inline_comment_replies_schema"
+    retriever:
+      type: SimpleRetriever
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: comment_id
+            partition_field: parent_comment_id
+            stream:
+              $ref: "#/streams/5"
+      requester:
+        $ref: "#/definitions/base_requester"
+        path: /wiki/api/v2/inline-comments/{{ stream_partition.parent_comment_id }}/children
+        request_parameters:
+          limit: "{{ config.get('confluence_page_size', 100) }}"
+          body-format: storage
+      paginator:
+        $ref: "#/definitions/confluence_paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - results
+    transformations:
+      - $ref: "#/definitions/add_fields"
+      - type: AddFields
+        fields:
+          - path: [comment_id]
+            value: "{{ record['id'] }}"
+          - path: [page_id]
+            value: "{{ record.get('pageId', '') }}"
+          - path: [parent_comment_id]
+            value: "{{ stream_partition.parent_comment_id }}"
+          - path: [author_id]
+            value: "{{ (record.get('version', {}) or {}).get('authorId', '') }}"
+          - path: [created_at]
+            value: "{{ (record.get('version', {}) or {}).get('createdAt', '') }}"
+          - path: [body_storage]
+            value: >-
+              {{ (record.get('body', {}) or {}).get('storage', {}).get('value', '') }}
+          - path: [collected_at]
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+          - path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
+              }}-{{ record['id'] }}
+
 concurrency_level:
   type: ConcurrencyLevel
   default_concurrency: 1
@@ -381,3 +720,7 @@ metadata:
     wiki_spaces: false
     wiki_pages: false
     wiki_page_versions: false
+    wiki_footer_comments: false
+    wiki_footer_comment_replies: false
+    wiki_inline_comments: false
+    wiki_inline_comment_replies: false

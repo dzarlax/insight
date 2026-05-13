@@ -13,8 +13,12 @@
     tags=['confluence']
 ) }}
 
-{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_pages',         order_by='unique_key') %}
-{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_page_versions', order_by='unique_key') %}
-{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_spaces',        order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_pages',                  order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_page_versions',          order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_spaces',                 order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_footer_comments',        order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_footer_comment_replies', order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_inline_comments',        order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_confluence.wiki_inline_comment_replies', order_by='unique_key') %}
 
 SELECT 1 AS promoted

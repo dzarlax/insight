@@ -151,6 +151,7 @@ The wiki data model is document-centric rather than event-centric: Bronze tables
 - Extraction of Confluence spaces with type, status, and URL
 - Extraction of pages with metadata, version number, parent hierarchy, author, and last editor
 - Extraction of version history (edit activity) as per-user per-page per-day edit counts
+- Extraction of footer and inline page comments (top-level + replies for both kinds) — issue #285
 - Extraction of per-user per-page view analytics from the Premium analytics endpoint (graceful degradation when unavailable)
 - Extraction of user directory via `accountId` → email resolution through the Atlassian User API bulk endpoint
 - User directory history preserved with SCD Type 2 (`valid_from`/`valid_to`)
@@ -169,7 +170,6 @@ The wiki data model is document-centric rather than event-centric: Bronze tables
 - Confluence Server/Data Center — this connector targets Confluence Cloud only
 - Page body/content extraction — only metadata and activity metrics are collected
 - Attachment downloads or file metadata
-- Page comments (footer comments and inline comments) — deferred to a future release
 - Blog posts — deferred to a future release
 - Confluence webhooks or event-driven collection
 - Outline connector implementation — separate connector using the same `wiki_*` schema
@@ -217,6 +217,20 @@ The connector **MUST** extract version history for collected pages from `GET /pa
 The connector **MUST** only fetch versions created after the last successful cursor position to avoid re-processing historical versions on incremental runs.
 
 **Rationale**: Version history is the edit log for Confluence — each version represents one save/edit event. Per-user per-day edit counts are the foundation for editorial velocity metrics and contributor activity analysis.
+
+**Actors**: `cpt-insightspec-actor-conf-api`, `cpt-insightspec-actor-conf-analyst`
+
+#### Extract Page Comments (Footer + Inline, with Replies)
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-conf-comment-extraction`
+
+The connector **MUST** capture page comments — both kinds Confluence exposes (footer comments at the page bottom and inline comments anchored to a highlighted text fragment) — and **MUST** capture replies to those comments, attributed to the comment author and to the parent page.
+
+Each captured comment **MUST** carry, at minimum, enough information for downstream Silver to compute per-page-day engagement (commenter identity, parent page, creation date, comment kind, top-level vs reply distinction).
+
+**Rationale**: Comments are how reviewers, doc owners, and stakeholders engage with a page after publish. Today's per-edit `wiki_page_activity` undercounts collaboration because someone who comments on others' pages but rarely authors is invisible. Comment data feeds engagement KPIs like "this RFC got 12 comments from 5 reviewers" vs "this RFC was published and ignored". Issue #285.
+
+**Stream wiring, endpoint choreography, and Bronze field definitions** are specified in [DESIGN §1.2 / §3.7](./DESIGN.md) — the v2 page-level listing endpoints don't return replies (verified empirically), so the implementation needs a 2-level parent-child substream chain.
 
 **Actors**: `cpt-insightspec-actor-conf-api`, `cpt-insightspec-actor-conf-analyst`
 

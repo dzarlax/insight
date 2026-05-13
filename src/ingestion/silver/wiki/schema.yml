@@ -154,3 +154,84 @@ models:
                 values: ['insight_confluence']
       - name: collected_at
         description: "When the record was collected"
+
+  - name: class_wiki_engagement
+    description: >
+      Per-page per-day comment engagement across wiki sources. One row per
+      (tenant, source, page, day) summarising all comment activity on
+      that page on that day — footer top-level, inline top-level, and
+      replies (both kinds). Feeds engagement metrics ("which docs got
+      reviewed vs published-and-ignored") in gold. See issue #285.
+
+      First contributor: Confluence (`confluence__wiki_engagement`). Other
+      wiki sources can hook in later by adding staging models tagged
+      `silver:class_wiki_engagement`.
+
+      Design note (#285 AC#2 waiver): the issue's literal AC#2 asked for
+      per-event comment rows to be added to `class_wiki_activity` with a
+      `person_key`. We deliberately delivered a separate per-page-day
+      class instead — the page-centric grain matches the use cases in
+      the issue ("got 12 comments from 5 reviewers" vs "published and
+      ignored"), keeps the existing per-author-day grain of
+      `class_wiki_activity` (set after #259) intact, and avoids mixing
+      two metric families with different scaling profiles in one table.
+      A future per-person comment-activity model — if a use case lands
+      — should read from the same 4 bronze streams without retrofitting
+      either existing class.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key: {tenant}-{source}-{page_id}-{day} (ADR-0004)"
+        tests:
+          - not_null
+          - unique
+      - name: page_id
+        description: "Wiki page identifier (stable across the source)"
+        tests:
+          - not_null
+      - name: day
+        description: "Activity date (UTC)"
+        tests:
+          - not_null
+      - name: total_comments
+        description: >
+          Total comment events on this page on this day across all 4 source
+          streams (footer top, footer replies, inline top, inline replies).
+        tests:
+          - not_null
+      - name: footer_comments
+        description: "Top-level footer comments (page-bottom, no anchor)"
+      - name: inline_comments
+        description: "Top-level inline comments (highlight-anchored)"
+      - name: replies
+        description: "Replies to comments (footer + inline combined)"
+      - name: unique_commenters
+        description: "Distinct author_id across all 4 streams on this page-day"
+      - name: unresolved_inline_count
+        description: >
+          Top-level inline comments whose `resolution_status = 'open'`. Replies
+          and footer comments don't carry resolution status. Useful as a
+          "open review threads" proxy.
+      - name: source
+        description: "Staging-model discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['confluence']
+      - name: data_source
+        description: "Framework source discriminator"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['insight_confluence']
+      - name: collected_at
+        description: "When the latest contributing comment row was collected"

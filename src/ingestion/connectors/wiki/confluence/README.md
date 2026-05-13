@@ -64,11 +64,16 @@ kubectl apply -f src/ingestion/secrets/connectors/confluence.yaml
 | `wiki_spaces` | Space directory (id, name, type, status, URL) | Full Refresh |
 | `wiki_pages` | Page metadata with version info (incremental on `updated_at`) | Incremental (client-side cursor) |
 | `wiki_page_versions` | Version history per page (substream of wiki_pages) | Full Refresh (per parent page) |
+| `wiki_footer_comments` | Page-bottom comments, top-level (substream of wiki_pages, #285) | Full Refresh (per parent page) |
+| `wiki_footer_comment_replies` | Replies to footer comments (substream of wiki_footer_comments) | Full Refresh (per parent comment) |
+| `wiki_inline_comments` | Highlight-anchored inline comments, top-level (substream of wiki_pages, #285) | Full Refresh (per parent page) |
+| `wiki_inline_comment_replies` | Replies to inline comments (substream of wiki_inline_comments) | Full Refresh (per parent comment) |
 
 ## Silver Targets
 
 - `class_wiki_pages` -- unified page metadata across Confluence and Outline
 - `class_wiki_activity` -- per-user per-day edit activity (derived from page versions)
+- `class_wiki_engagement` -- per-page-day comment engagement metrics (#285)
 
 User identity resolution: `wiki_pages.author_id` -> `jira_user.account_id` -> `email` -> `person_id` (via Identity Manager in Silver step 2)
 
@@ -90,4 +95,4 @@ wiki_pages.author_id (accountId)
 - No analytics data (view counts, distinct viewers) -- deferred to Phase 2
 - No email resolution at connector level -- resolved in Silver via jira_user
 - Client-side incremental cursor (API lacks server-side `lastModifiedAfter`)
-- No blog post or comment extraction
+- No blog post extraction (comments are now ingested per #285 -- footer + inline + replies)
