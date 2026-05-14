@@ -119,13 +119,14 @@ partition `(tenant, person, source_type, source_id, value_type)`
 
 ### Confirmation
 
-Confirmed by ten integration tests in
+Confirmed by eleven integration tests in
 `Insight.Identity.Tests.Integration/ProfilesEndpointTests.cs`:
-two happy-path lookups (email + id), three not-found paths
-(unknown email, unknown id within source, rebound email old value),
-one ambiguity test (two persons sharing an email → 422 with
-`person_ids` list), four validation paths (missing value_type, id
-without source fields, email with source fields, missing tenant).
+two happy-path lookups (email + id) plus an email-lowercase test,
+three not-found paths (unknown email, unknown id within source,
+rebound email old value), one ambiguity test (two persons sharing
+an email → 422 with `person_ids` list), four validation paths
+(missing value_type, id without source fields, email with source
+fields, missing tenant).
 
 ## Pros and Cons of the Options
 
