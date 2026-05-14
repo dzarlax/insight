@@ -429,7 +429,7 @@ identity:
 frontend:
   replicaCount: 1
   image:
-    repository: ghcr.io/cyberfabric/insight-front
+    repository: ghcr.io/cyberfabric/cyber-insight-front
     tag: "" # MUST be set (e.g. "0.1.0")
     pullPolicy: IfNotPresent
   resources:
