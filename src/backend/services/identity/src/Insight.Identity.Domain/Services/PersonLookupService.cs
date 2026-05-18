@@ -22,7 +22,12 @@ public sealed class PersonLookupService
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(email);
-        var emailKey = email.Trim().ToLowerInvariant();
+        // No case normalisation: per ADR-0011 the `persons.value_id`
+        // column collation is `utf8mb4_unicode_ci`, so the SQL
+        // comparison tolerates case differences regardless of how the
+        // caller typed the email. Trim is still useful for stray
+        // whitespace from URL paths.
+        var emailKey = email.Trim();
 
         var personId = await _reader.ResolvePersonIdByEmailAsync(tenantId, emailKey, cancellationToken)
             .ConfigureAwait(false);
