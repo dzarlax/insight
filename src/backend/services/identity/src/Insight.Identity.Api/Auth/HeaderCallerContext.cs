@@ -14,8 +14,13 @@ public sealed class HeaderCallerContext : ICallerContext
     public Guid? Resolve(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+        // Reject Guid.Empty — a parseable but non-identity value. A misbehaving
+        // gateway sending `00000000-…` (e.g. when the JWT `sub` claim is
+        // missing) would otherwise be promoted to a real caller and pollute
+        // the audit log with a phantom `author_person_id`.
         if (context.Request.Headers.TryGetValue(HeaderName, out var raw)
-            && Guid.TryParse(raw.ToString(), out var personId))
+            && Guid.TryParse(raw.ToString(), out var personId)
+            && personId != Guid.Empty)
         {
             return personId;
         }

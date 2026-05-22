@@ -16,6 +16,10 @@ public sealed class JwtTenantContext : ITenantContext
     {
         ArgumentNullException.ThrowIfNull(context);
         var raw = context.User.FindFirst("insight_tenant_id")?.Value;
-        return Guid.TryParse(raw, out var tenantId) ? tenantId : null;
+        // Reject Guid.Empty — a parseable but non-identity value should not
+        // pin tenant context (same rule as HeaderCallerContext / HeaderTenantContext).
+        return Guid.TryParse(raw, out var tenantId) && tenantId != Guid.Empty
+            ? tenantId
+            : null;
     }
 }

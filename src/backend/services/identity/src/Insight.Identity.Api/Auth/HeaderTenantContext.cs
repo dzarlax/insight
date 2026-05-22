@@ -14,8 +14,11 @@ public sealed class HeaderTenantContext : ITenantContext
     public Guid? Resolve(HttpContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+        // Reject Guid.Empty — same reasoning as HeaderCallerContext: a
+        // parseable but non-identity value should not pin tenant context.
         if (context.Request.Headers.TryGetValue(HeaderName, out var raw)
-            && Guid.TryParse(raw.ToString(), out var tenantId))
+            && Guid.TryParse(raw.ToString(), out var tenantId)
+            && tenantId != Guid.Empty)
         {
             return tenantId;
         }

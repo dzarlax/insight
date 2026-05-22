@@ -45,13 +45,16 @@ public sealed class HeaderCallerContextTests
     }
 
     [Fact]
-    public void Accepts_guid_empty()
+    public void Rejects_guid_empty()
     {
         var context = new DefaultHttpContext();
         context.Request.Headers[HeaderCallerContext.HeaderName] = Guid.Empty.ToString();
 
         var resolved = new HeaderCallerContext().Resolve(context);
 
-        resolved.Should().Be(Guid.Empty);
+        // Guid.Empty is parseable but is not a real identity — accepting it
+        // would let a misbehaving gateway promote `00000000-…` to a valid
+        // caller and pollute the audit trail.
+        resolved.Should().BeNull();
     }
 }
