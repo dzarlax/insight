@@ -115,7 +115,7 @@ curl -sS -o /dev/null -w "  HTTP %{http_code}\n" -X DELETE \
 step "422 urn:insight:error:last_admin_protected — try revoking the only remaining admin"
 # Find the bootstrap admin's person_role_id.
 LAST_ADMIN_PR_ID=$(curl -sS \
-  "${BASE_URL}/v1/person-roles?active=true&role_id=${ROLE_ADMIN_ID}" \
+  "${BASE_URL}/v1/person-roles?active=true&role=${ROLE_ADMIN_ID}" \
   "${H_TENANT[@]}" "${H_ADMIN[@]}" \
   | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["items"][0]["person_role_id"])')
 

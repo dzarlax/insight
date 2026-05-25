@@ -105,18 +105,20 @@ internal static class SqlRoles
              IFNULL(@valid_from, UTC_TIMESTAMP(6)), NULL, @author_person_id, @reason)
         """;
 
-    // Atomic soft-delete with last-admin protection. One round-trip:
-    // the UPDATE refuses to fire when (a) the row is the only active
-    // admin in its tenant, OR (b) the row is already revoked / missing.
-    // Strategy: a single derived table (`row_with_count`) computes both
-    // the row-to-revoke metadata AND the active-admin count for the
-    // row's tenant in one shot — the correlated COUNT lives inside the
-    // derived table's SELECT list, where MariaDB resolves it before the
-    // UPDATE acts. The outer UPDATE then sees `row_with_count` as a
-    // plain JOINed source, which sidesteps the "cannot SELECT from
-    // the table being updated" restriction. Disambiguate
-    // rows_affected==0 in the caller (404 vs 422 last_admin_protected)
-    // via a second read.
+    // Soft-delete with last-admin protection. Runs as the second
+    // statement inside a transaction; the first statement is
+    // <see cref="LockActiveAdminsInTenantForUpdate"/>, which pins
+    // every active admin row in the target's tenant under InnoDB
+    // row-level write locks. With those locks held, no concurrent
+    // transaction can revoke another admin between our COUNT and our
+    // UPDATE — TOCTOU is closed even when the correlated COUNT inside
+    // the derived table is treated as a snapshot read.
+    //
+    // The UPDATE itself still uses the derived-table `row_with_count`
+    // pattern to materialise tenant + active-admin count once, then
+    // applies the guard `role_id <> admin OR count > 1`. Caller
+    // disambiguates rows_affected==0 between 404 (row gone or already
+    // revoked) and 422 last_admin_protected via a second read.
     public const string TrySoftDeletePersonRoleProtectingLastAdmin = """
         UPDATE person_roles AS target
         JOIN (
@@ -142,5 +144,28 @@ internal static class SqlRoles
               row_with_count.role_id <> @admin_role_id
               OR row_with_count.active_admin_cnt > 1
           )
+        """;
+
+    // Pin-the-count: row-level X-locks on every active admin row in the
+    // target's tenant. The aggregate COUNT(*) scans the same rows
+    // FOR UPDATE pins, so the read serialises with itself across
+    // concurrent transactions. Issued as the first statement inside the
+    // soft-delete transaction; followed by
+    // <see cref="TrySoftDeletePersonRoleProtectingLastAdmin"/>.
+    //
+    // We resolve the target's tenant via a scalar subquery on
+    // person_role_id rather than passing it as a parameter — the C#
+    // caller does not always know the tenant up-front and we want a
+    // single round-trip for the lock acquisition.
+    public const string LockActiveAdminsInTenantForUpdate = """
+        SELECT COUNT(*)
+        FROM person_roles
+        WHERE insight_tenant_id = (
+                SELECT insight_tenant_id FROM person_roles
+                WHERE person_role_id = @person_role_id
+              )
+          AND role_id  = @admin_role_id
+          AND valid_to IS NULL
+        FOR UPDATE
         """;
 }

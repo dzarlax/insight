@@ -207,12 +207,40 @@ public sealed class RolesRepository : IRolesReader, IPersonRolesReader
         string? reason,
         CancellationToken cancellationToken)
     {
+        // Transactional lock-then-update: the derived-table COUNT inside
+        // the UPDATE alone is implementation-dependent (snapshot read in
+        // some MariaDB versions), so two concurrent revokes targeting
+        // different admin rows in a 2-admin tenant could both observe
+        // count>1 and both commit, leaving zero admins. We close the
+        // race by acquiring row-level write locks on every active admin
+        // in the target's tenant first; the UPDATE that follows then
+        // sees a serialised view of the count.
+        var personRoleBytes = personRoleId.ToByteArray(bigEndian: true);
+        var adminRoleBytes  = adminRoleId.ToByteArray(bigEndian: true);
+
         await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await using var cmd = new MySqlCommand(SqlRoles.TrySoftDeletePersonRoleProtectingLastAdmin, conn);
-        cmd.Parameters.AddWithValue("@person_role_id", personRoleId.ToByteArray(bigEndian: true));
-        cmd.Parameters.AddWithValue("@admin_role_id",  adminRoleId.ToByteArray(bigEndian: true));
+        await using var tx = await conn
+            .BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken)
+            .ConfigureAwait(false);
+
+        await using (var lockCmd = new MySqlCommand(SqlRoles.LockActiveAdminsInTenantForUpdate, conn, tx))
+        {
+            lockCmd.Parameters.AddWithValue("@person_role_id", personRoleBytes);
+            lockCmd.Parameters.AddWithValue("@admin_role_id",  adminRoleBytes);
+            // ExecuteScalarAsync drains the single COUNT row and forces
+            // MariaDB to finish the scan — every active admin row in the
+            // tenant is locked by the time we move on.
+            await lockCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await using var cmd = new MySqlCommand(SqlRoles.TrySoftDeletePersonRoleProtectingLastAdmin, conn, tx);
+        cmd.Parameters.AddWithValue("@person_role_id", personRoleBytes);
+        cmd.Parameters.AddWithValue("@admin_role_id",  adminRoleBytes);
         cmd.Parameters.AddWithValue("@reason",         reason is null ? (object)DBNull.Value : reason);
-        return await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return rows;
     }
 
     // ── Read helpers ────────────────────────────────────────────────

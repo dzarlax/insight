@@ -244,6 +244,53 @@ public sealed class OrgChartVisibilityEndpointsTests : IAsyncLifetime
         del.StatusCode.Should().Be(HttpStatusCode.NoContent);
     }
 
+    [Fact]
+    public async Task PersonRoles_concurrent_admin_revokes_serialise_to_one_204_one_422()
+    {
+        // Two admins, two parallel revokes — one targets each row, each
+        // caller is the row's owner. Without the FOR UPDATE lock in
+        // `TrySoftDeletePersonRoleProtectingLastAdminAsync`, the
+        // correlated COUNT inside the UPDATE's derived table is a
+        // snapshot read; both transactions could observe count=2 and
+        // both commit, leaving the tenant with zero active admins.
+        // With the lock, the second transaction blocks until the first
+        // commits, then sees count=1 and refuses with 422. Outcome must
+        // be exactly one 204 + one 422 in either order.
+        //
+        // Promote NonAdminId to admin so we have 2 admin rows. AdminPersonId
+        // is already admin from InitializeAsync.
+        await InsertPersonRoleAsync(NonAdminId, Roles.Admin).ConfigureAwait(false);
+
+        var adminClient = _adminApp!.CreateClient();
+        var list = await adminClient.GetAsync($"/v1/person-roles?role={Roles.Admin:D}&active=true")
+            .ConfigureAwait(false);
+        var listDoc = await list.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
+        var items = listDoc.GetProperty("items").EnumerateArray().ToArray();
+        items.Should().HaveCount(2, "the test arranges exactly two admins so the race window is meaningful");
+
+        Guid PrIdFor(Guid pid) => items.Single(x => x.GetProperty("person_id").GetGuid() == pid)
+            .GetProperty("person_role_id").GetGuid();
+        var adminPrId    = PrIdFor(AdminPersonId);
+        var nonAdminPrId = PrIdFor(NonAdminId);
+
+        // Issue both DELETEs concurrently. Each task uses its own
+        // HttpClient (different default caller header) to keep the
+        // requests independent.
+        var taskA = adminClient.DeleteAsync($"/v1/person-roles/{adminPrId:D}");
+        var taskB = _nonAdminApp!.CreateClient().DeleteAsync($"/v1/person-roles/{nonAdminPrId:D}");
+        var results = await Task.WhenAll(taskA, taskB).ConfigureAwait(false);
+
+        var codes = results.Select(r => r.StatusCode).OrderBy(c => (int)c).ToArray();
+        codes.Should().Equal(HttpStatusCode.NoContent, HttpStatusCode.UnprocessableEntity);
+
+        // The 204+422 pair is the test invariant — it proves the lock
+        // serialised the two transactions (one revoked, one refused).
+        // We deliberately skip a final list-as-admin probe: whichever
+        // caller's row got revoked is no longer admin, so we cannot
+        // pick a fixed client for the read without colouring the
+        // assertion by which caller won the race.
+    }
+
     // ── Seed helpers ────────────────────────────────────────────────
 
     private async Task InsertPersonRoleAsync(Guid personId, Guid roleId)
