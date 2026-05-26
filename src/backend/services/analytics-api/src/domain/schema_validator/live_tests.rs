@@ -2,9 +2,21 @@
 //!
 //! All tests are `#[ignore]`d by default and skip silently when the required
 //! env vars are unset, so `cargo test` and `cargo test -- --ignored` stay
-//! green on a stock dev machine. Set `MARIADB_URL` (always) and
-//! `CLICKHOUSE_URL` (for the ClickHouse-touching tests) against throwaway
-//! services to exercise them.
+//! green on a stock dev machine. Set `INTEGRATION_TESTS_MARIADB_URL` (always)
+//! and `INTEGRATION_TESTS_CLICKHOUSE_URL` (for the ClickHouse-touching tests)
+//! against throwaway services to exercise them.
+//!
+//! ## Why the `INTEGRATION_TESTS_` prefix
+//!
+//! `reset_catalog` DROPs `metric_catalog`, `metric_threshold`, and
+//! `threshold_lock_audit` on every invocation. A plain `MARIADB_URL` /
+//! `CLICKHOUSE_URL` would collide with the same names commonly exported in
+//! a dev shell (compose stacks, docker-machine helpers, in-cluster service
+//! discovery) — running `cargo test -- --ignored` with those set would
+//! silently destroy whatever DB they pointed at. The
+//! `INTEGRATION_TESTS_` prefix forces the operator to opt in for THIS test
+//! suite specifically, so the destructive setup runs only when the env var
+//! was set with full knowledge of what it triggers.
 //!
 //! Coverage map (Definition of Done):
 //! - `DoD` #1 readiness on dead ClickHouse: [`validate_all_against_dead_clickhouse_marks_unchecked`].
@@ -26,9 +38,9 @@ use crate::domain::schema_validator::status::SchemaState;
 use crate::domain::schema_validator::{DEFAULT_DEBOUNCE, SchemaValidator, ValidationOutcome};
 use crate::migration::Migrator;
 
-const MARIADB_ENV: &str = "MARIADB_URL";
-const CLICKHOUSE_ENV: &str = "CLICKHOUSE_URL";
-const CLICKHOUSE_DB_ENV: &str = "CLICKHOUSE_DATABASE";
+const MARIADB_ENV: &str = "INTEGRATION_TESTS_MARIADB_URL";
+const CLICKHOUSE_ENV: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
+const CLICKHOUSE_DB_ENV: &str = "INTEGRATION_TESTS_CLICKHOUSE_DATABASE";
 const TEST_METRIC_KEY: &str = "schema_validator_test.exists";
 const TEST_METRIC_KEY_MISSING_TABLE: &str = "no_such_table.col";
 
@@ -99,7 +111,7 @@ async fn drop_test_table(ch: &insight_clickhouse::Client) {
 }
 
 #[tokio::test]
-#[ignore = "requires live MariaDB; set MARIADB_URL to enable"]
+#[ignore = "requires live MariaDB; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 async fn schema_writes_do_not_bump_updated_at() -> anyhow::Result<()> {
     // DoD #5: every schema_* write pins `updated_at` so the product-metadata
     // last-changed signal stays meaningful.
@@ -136,7 +148,7 @@ async fn schema_writes_do_not_bump_updated_at() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "requires live MariaDB; set MARIADB_URL to enable"]
+#[ignore = "requires live MariaDB; set INTEGRATION_TESTS_MARIADB_URL to enable"]
 async fn validate_debounces_within_window() -> anyhow::Result<()> {
     // DoD #3: the per-write hook skips ClickHouse when schema_checked_at is
     // recent. We don't need a live ClickHouse here — the debounce branch
@@ -173,7 +185,7 @@ async fn validate_debounces_within_window() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "requires live MariaDB + live ClickHouse; set MARIADB_URL + CLICKHOUSE_URL to enable"]
+#[ignore = "requires live MariaDB + live ClickHouse; set INTEGRATION_TESTS_MARIADB_URL + INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
 async fn validate_all_against_dead_clickhouse_marks_unchecked() -> anyhow::Result<()> {
     // DoD #1: when ClickHouse is unreachable, the validator marks rows
     // unchecked and the readiness probe is unaffected. We don't drive the
@@ -220,7 +232,7 @@ async fn validate_all_against_dead_clickhouse_marks_unchecked() -> anyhow::Resul
 }
 
 #[tokio::test]
-#[ignore = "requires live MariaDB + live ClickHouse; set MARIADB_URL + CLICKHOUSE_URL to enable"]
+#[ignore = "requires live MariaDB + live ClickHouse; set INTEGRATION_TESTS_MARIADB_URL + INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
 async fn validate_all_only_writes_canonical_error_codes() -> anyhow::Result<()> {
     // DoD #4: no raw CH text in schema_error_code. We seed a row whose table
     // doesn't exist; the validator must persist `error_code='table_not_found'`,
@@ -260,7 +272,7 @@ async fn validate_all_only_writes_canonical_error_codes() -> anyhow::Result<()> 
 }
 
 #[tokio::test]
-#[ignore = "requires live MariaDB + live ClickHouse; set MARIADB_URL + CLICKHOUSE_URL to enable"]
+#[ignore = "requires live MariaDB + live ClickHouse; set INTEGRATION_TESTS_MARIADB_URL + INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
 async fn column_rename_flips_status() -> anyhow::Result<()> {
     // DoD #6: rename a column → next validate flips to error/column_not_found;
     // rename back → flips to ok.
