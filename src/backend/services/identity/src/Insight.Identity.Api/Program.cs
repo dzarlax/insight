@@ -73,6 +73,24 @@ builder.Services.AddSingleton<SubchartRepository>();
 builder.Services.AddSingleton<ISubchartReader>(sp => sp.GetRequiredService<SubchartRepository>());
 builder.Services.AddSingleton<SubchartService>();
 
+// persons-seed: admin-triggered bulk re-seed from ClickHouse
+// identity_inputs. ClickHouse client + the generic operations audit
+// store + the seed orchestrator + the background drainer.
+builder.Services
+    .AddOptions<Insight.Identity.Infrastructure.ClickHouse.ClickHouseOptions>()
+    .Bind(builder.Configuration.GetSection(Insight.Identity.Infrastructure.ClickHouse.ClickHouseOptions.SectionName));
+builder.Services.AddSingleton<Insight.Identity.Infrastructure.ClickHouse.ClickHouseConnectionFactory>();
+builder.Services.AddSingleton<Insight.Identity.Infrastructure.ClickHouse.ClickHouseIdentityInputsReader>();
+builder.Services.AddSingleton<IIdentityInputsReader>(sp =>
+    sp.GetRequiredService<Insight.Identity.Infrastructure.ClickHouse.ClickHouseIdentityInputsReader>());
+builder.Services.AddSingleton<OperationsRepository>();
+builder.Services.AddSingleton<IOperationsRepository>(sp => sp.GetRequiredService<OperationsRepository>());
+builder.Services.AddSingleton<PersonsSeedRepository>();
+builder.Services.AddSingleton<IPersonsSeedStore>(sp => sp.GetRequiredService<PersonsSeedRepository>());
+builder.Services.AddSingleton<PersonsSeedService>();
+builder.Services.AddSingleton<Insight.Identity.Api.Background.PersonsSeedQueue>();
+builder.Services.AddHostedService<Insight.Identity.Api.Background.PersonsSeedWorker>();
+
 // FluentValidation — Phase 2 POST /v1/profiles body. Scans the Api
 // assembly for AbstractValidator<T> implementations.
 builder.Services.AddValidatorsFromAssemblyContaining<Insight.Identity.Api.Validation.ResolveProfileCommandValidator>();
@@ -263,6 +281,7 @@ app.MapVisibilityEndpoints();
 app.MapRoleEndpoints();
 app.MapPersonRoleEndpoints();
 app.MapSubchartEndpoints();
+app.MapPersonsSeedEndpoints();
 
 await app.RunAsync().ConfigureAwait(false);
 

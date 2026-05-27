@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
 """
+DEPRECATED (2026-05-27). The seeding algorithm has been ported to the
+identity service as the admin-triggered `POST /v1/persons-seed`
+endpoint (C# `PersonsSeedService`). That endpoint is tenant-scoped,
+audited via the `operations` table, and links email-collision accounts
+to the existing person instead of marking them pending-iresolution.
+
+This script is kept as an emergency / offline fallback and as the
+reference for the ported algorithm. Do NOT add features here — change
+`PersonsSeedService` instead. Scheduled for removal once any remaining
+cron / Argo consumers migrate to the endpoint.
+
 Seed: identity.identity_inputs (ClickHouse) -> persons +
 account_person_map + org_chart (MariaDB).
 
