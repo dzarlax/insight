@@ -20,6 +20,15 @@ pub struct ThresholdError;
 #[resource_error("gts.cf.insight.analytics_api.person.v1~")]
 pub struct PersonError;
 
+/// Resource namespace for the metric-catalog read endpoint (Refs #524).
+///
+/// Distinct from [`MetricError`] (which scopes the legacy `/v1/metrics` CRUD
+/// surface) so consumers of `POST /catalog/get_metrics` see the catalog's own
+/// GTS namespace per DESIGN §3.3 ("Resource GTS namespaces introduced for the
+/// catalog … `gts.cf.insight.metric_catalog.metric.v1~`").
+#[resource_error("gts.cf.insight.metric_catalog.metric.v1~")]
+pub struct MetricCatalogError;
+
 /// Resource namespace for tenant-resolution failures
 /// (`cpt-metric-cat-constraint-tenant-default`). The middleware surfaces an
 /// `invalid_argument` envelope with `field_violations[{field: "tenant_id",
