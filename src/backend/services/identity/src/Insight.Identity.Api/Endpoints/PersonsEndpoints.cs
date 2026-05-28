@@ -24,17 +24,17 @@ public static class PersonsEndpoints
             ITenantContext tenants,
             ICallerContext callers,
             PersonLookupService lookup,
-            VisibilityService visibility,
             IOptions<AppOptions> options,
             CancellationToken cancellationToken) =>
         {
-            // Endpoint is deprecated: the email in the URL path leaks into
-            // observability surfaces outside this service. New callers go
-            // to POST /v1/profiles. RFC 8594 headers signal this on every
-            // response so existing integrations notice without action.
-            http.Response.Headers["Deprecation"] = "true";
-            http.Response.Headers.Append("Link", "</v1/profiles>; rel=\"successor-version\"");
-
+            // The {email} path segment is retained for backward
+            // compatibility but intentionally ignored: the response is
+            // always the caller's own accessible org forest — their
+            // subtree unioned with every subtree they hold a visibility
+            // grant on (whole-tenant grant => the entire tenant tree).
+            // The visible set is exactly the same one the visibility CTE
+            // gates POST /v1/profiles by, just materialized as a tree, so
+            // no record outside the caller's visibility is ever returned.
             var tenantId = tenants.Resolve(http);
             if (tenantId is null)
             {
@@ -59,25 +59,18 @@ public static class PersonsEndpoints
 
             var lookupOptions = BuildLookupOptions(options.Value);
 
-            var person = await lookup.GetByEmailAsync(tenantId.Value, email, lookupOptions, cancellationToken)
+            var forest = await lookup.GetVisibleForestAsync(
+                    tenantId.Value, callerPersonId.Value, lookupOptions, cancellationToken)
                 .ConfigureAwait(false);
-            if (person is null)
+            if (forest is null)
             {
+                // Caller has no observations of their own — nothing to root
+                // the forest on. 404 with the requested email keeps the
+                // response shape stable for existing clients.
                 return NotFoundByEmail(email);
             }
 
-            var canSee = await visibility.CanSeeAsync(
-                    tenantId.Value, callerPersonId.Value, person.PersonId,
-                    lookupOptions.OrgChartSourceType, cancellationToken)
-                .ConfigureAwait(false);
-            if (!canSee)
-            {
-                // Deny → 404 (same shape as not-found) to avoid leaking
-                // the target's existence to a caller without visibility.
-                return NotFoundByEmail(email);
-            }
-
-            return Results.Ok(PersonResponse.From(person));
+            return Results.Ok(PersonResponse.From(forest));
         });
 
         app.MapPost("/v1/profiles", async (

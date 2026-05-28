@@ -44,16 +44,14 @@ public sealed class OrgTreeEndpointTests : IAsyncLifetime
     [Fact]
     public async Task GET_persons_alice_returns_supervisor_pair_from_org_chart()
     {
-        var client = _app!.CreateClient();
+        // Self-lookup: Alice is the caller, so her own node roots the
+        // forest and her assembled attributes surface at the top level.
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: AlicePersonId);
+        var client = app.CreateClient();
         var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
             .ConfigureAwait(false);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        // RFC 8594 — endpoint deprecated; every response carries the
-        // signalling headers steering callers to POST /v1/profiles.
-        response.Headers.GetValues("Deprecation").Should().ContainSingle().Which.Should().Be("true");
-        response.Headers.GetValues("Link").Should().ContainSingle()
-            .Which.Should().Contain("/v1/profiles").And.Contain("rel=\"successor-version\"");
 
         var doc = await response.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
 
@@ -79,7 +77,11 @@ public sealed class OrgTreeEndpointTests : IAsyncLifetime
     [Fact]
     public async Task GET_persons_bob_returns_recursive_subordinates_from_org_chart()
     {
-        var client = _app!.CreateClient();
+        // Self-lookup: Bob is the caller; his own subtree (Alice, Dave)
+        // is the forest under his node.
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: BobPersonId);
+        var client = app.CreateClient();
         var response = await client.GetAsync(new Uri("/v1/persons/bob@example.com", UriKind.Relative))
             .ConfigureAwait(false);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -109,7 +111,10 @@ public sealed class OrgTreeEndpointTests : IAsyncLifetime
         // edge (Bob). Only BambooHR drives the response.
         await InsertEdgeAsync("slack", SlackSourceId, child: AlicePersonId, parent: CarolPersonId).ConfigureAwait(false);
 
-        var client = _app!.CreateClient();
+        // Self-lookup as Alice; only her BambooHR parent edge drives the response.
+        using var app = new TestApplicationFactory(
+            _fixture.ConnectionString, TenantId, defaultCallerPersonId: AlicePersonId);
+        var client = app.CreateClient();
         var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
             .ConfigureAwait(false);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -128,7 +133,7 @@ public sealed class OrgTreeEndpointTests : IAsyncLifetime
         using var app = new TestApplicationFactory(
             _fixture.ConnectionString,
             TenantId,
-            defaultCallerPersonId: CallerPersonId,
+            defaultCallerPersonId: BobPersonId,
             expandSubordinates: false);
         var client = app.CreateClient();
         var response = await client.GetAsync(new Uri("/v1/persons/bob@example.com", UriKind.Relative))

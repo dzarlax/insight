@@ -57,6 +57,18 @@ public interface IPersonsReader
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Forest roots of the tenant within <paramref name="orgChartSourceType"/>:
+    /// the <c>person_id</c>s that are a CURRENT parent but never a CURRENT
+    /// child. These seed the whole-tenant tree expansion behind a
+    /// whole-tenant visibility grant. Empty list when the source has no
+    /// current edges.
+    /// </summary>
+    Task<IReadOnlyList<Guid>> GetRootPersonIdsAsync(
+        Guid tenantId,
+        string orgChartSourceType,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Distinct <c>person_id</c>s whose CURRENT email observation on
     /// any source equals <paramref name="email"/>. Empty list = no match.
     /// Count &gt; 1 = data invariant violated, caller maps to 422.

@@ -7,10 +7,12 @@ namespace Insight.Identity.Domain.Services;
 public sealed class PersonLookupService
 {
     private readonly IPersonsReader _reader;
+    private readonly IVisibilityReader _visibility;
 
-    public PersonLookupService(IPersonsReader reader)
+    public PersonLookupService(IPersonsReader reader, IVisibilityReader visibility)
     {
         _reader = reader;
+        _visibility = visibility;
     }
 
     /// <summary>Lookup by email. Returns <c>null</c> when no current observation matches.</summary>
@@ -58,6 +60,157 @@ public sealed class PersonLookupService
         var visited = new HashSet<Guid>();
         return await HydrateAsync(tenantId, personId, options, depth: 0, visited, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Build the caller's accessible org forest: the caller's own subtree
+    /// plus the subtree rooted at every active visibility grant. A
+    /// whole-tenant grant (<c>viewed_person_id IS NULL</c>) expands to
+    /// every tenant root. Granted roots are appended to the caller's
+    /// <see cref="Person.Subordinates"/>; a single <c>visited</c> set is
+    /// shared across the whole walk so an overlapping or revisited
+    /// person never appears twice. Source filtering matches
+    /// <see cref="LookupOptions.OrgChartSourceType"/>. Returns
+    /// <c>null</c> when the caller has no observations.
+    /// </summary>
+    public async Task<Person?> GetVisibleForestAsync(
+        Guid tenantId,
+        Guid viewerPersonId,
+        LookupOptions options,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        // Hydrate the caller first so their own node anchors the tree and
+        // their subtree is marked visited before any grant is expanded.
+        var visited = new HashSet<Guid>();
+        var (top, _) = await HydrateAsync(tenantId, viewerPersonId, options, depth: 0, visited, cancellationToken)
+            .ConfigureAwait(false);
+        if (top is null)
+        {
+            return null;
+        }
+
+        var grants = await _visibility
+            .GetActiveVisibilityGrantsByViewerAsync(tenantId, viewerPersonId, cancellationToken)
+            .ConfigureAwait(false);
+
+        IReadOnlyList<Guid> grantedRoots;
+        if (grants.Any(static g => g.ViewedPersonId is null))
+        {
+            // Whole-tenant grant: expand from every root of the tenant forest.
+            grantedRoots = await _reader
+                .GetRootPersonIdsAsync(tenantId, options.OrgChartSourceType, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            var named = grants
+                .Where(static g => g.ViewedPersonId is not null)
+                .Select(static g => g.ViewedPersonId!.Value)
+                .Distinct()
+                .ToList();
+            grantedRoots = await PruneSubsumedRootsAsync(
+                    tenantId, viewerPersonId, named, options.OrgChartSourceType, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (grantedRoots.Count == 0)
+        {
+            return top;
+        }
+
+        var extra = new List<Person>();
+        foreach (var rootId in grantedRoots)
+        {
+            // Shared `visited` skips the caller's own node and any subtree
+            // already emitted, so overlapping grants never duplicate a person.
+            var (built, _) = await HydrateAsync(tenantId, rootId, options, depth: 0, visited, cancellationToken)
+                .ConfigureAwait(false);
+            if (built is not null)
+            {
+                extra.Add(built);
+            }
+        }
+
+        if (extra.Count == 0)
+        {
+            return top;
+        }
+
+        var combined = new List<Person>(top.Subordinates.Count + extra.Count);
+        combined.AddRange(top.Subordinates);
+        combined.AddRange(extra);
+        return top with { Subordinates = combined };
+    }
+
+    /// <summary>
+    /// Drop any candidate root whose subtree is already covered by another
+    /// anchor — the viewer or another candidate that is its ancestor in
+    /// the source tree. Keeps only the maximal roots so the forest has no
+    /// nested duplicates.
+    /// </summary>
+    private async Task<IReadOnlyList<Guid>> PruneSubsumedRootsAsync(
+        Guid tenantId,
+        Guid viewerPersonId,
+        List<Guid> candidates,
+        string sourceType,
+        CancellationToken cancellationToken)
+    {
+        if (candidates.Count == 0)
+        {
+            return candidates;
+        }
+
+        var anchors = new HashSet<Guid>(candidates) { viewerPersonId };
+        var kept = new List<Guid>(candidates.Count);
+        foreach (var candidate in candidates)
+        {
+            if (!await HasAncestorInAsync(tenantId, candidate, anchors, sourceType, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                kept.Add(candidate);
+            }
+        }
+        return kept;
+    }
+
+    /// <summary>
+    /// Walk parents up from <paramref name="personId"/> within
+    /// <paramref name="sourceType"/>; returns <c>true</c> when an ancestor
+    /// is present in <paramref name="anchors"/>. A local guard set bounds
+    /// pathological cycles.
+    /// </summary>
+    private async Task<bool> HasAncestorInAsync(
+        Guid tenantId,
+        Guid personId,
+        HashSet<Guid> anchors,
+        string sourceType,
+        CancellationToken cancellationToken)
+    {
+        var current = personId;
+        var guard = new HashSet<Guid> { current };
+        while (true)
+        {
+            var parentEdges = await _reader
+                .GetCurrentParentsAsync(tenantId, current, cancellationToken)
+                .ConfigureAwait(false);
+            var parentEdge = FilterToSource(parentEdges, sourceType);
+            if (parentEdge is null)
+            {
+                return false;
+            }
+            var parentId = parentEdge.ParentPersonId;
+            if (anchors.Contains(parentId))
+            {
+                return true;
+            }
+            if (!guard.Add(parentId))
+            {
+                return false;
+            }
+            current = parentId;
+        }
     }
 
     private async Task<(Person? Person, IReadOnlyList<PersonObservation> Observations)> HydrateAsync(

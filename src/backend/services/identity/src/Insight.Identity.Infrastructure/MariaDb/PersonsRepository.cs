@@ -78,6 +78,19 @@ public sealed class PersonsRepository : IPersonsReader
             ("@parent_person_id", parentPersonId),
             cancellationToken);
 
+    public async Task<IReadOnlyList<Guid>> GetRootPersonIdsAsync(
+        Guid tenantId,
+        string orgChartSourceType,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(orgChartSourceType);
+        await using var conn = await _factory.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var cmd = new MySqlCommand(SqlOrgChart.RootPersonsForTenant, conn);
+        cmd.Parameters.AddWithValue("@tenant_id", tenantId.ToByteArray(bigEndian: true));
+        cmd.Parameters.AddWithValue("@org_source_type", orgChartSourceType);
+        return await ReadPersonIdsAsync(cmd, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<IReadOnlyList<OrgChartEdge>> ReadEdgesAsync(
         string sql,
         Guid tenantId,

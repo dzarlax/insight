@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using FluentAssertions;
 using Insight.Identity.Api.Contracts;
 using MySqlConnector;
@@ -8,10 +9,13 @@ using Xunit;
 namespace Insight.Identity.Tests.Integration;
 
 /// <summary>
-/// End-to-end tests for the visibility gate on <c>/v1/persons/{email}</c>
-/// and <c>POST /v1/profiles</c>. Each test builds its own seed (caller
-/// and target persons, optional grants, org_chart edges) and verifies
-/// the can-A-see-B predicate against the recursive CTE.
+/// End-to-end tests for the accessible-forest contract on
+/// <c>GET /v1/persons/{email}</c> and the visibility gate on
+/// <c>POST /v1/profiles</c>. GET ignores the email and returns the
+/// caller's own subtree unioned with every subtree they hold a
+/// visibility grant on (whole-tenant grant => the entire tenant tree);
+/// each test asserts which persons surface in the returned forest. POST
+/// still enforces the per-target can-A-see-B predicate (404 on deny).
 /// </summary>
 [Collection(MariaDbCollection.Name)]
 public sealed class VisibilityGateTests : IAsyncLifetime
@@ -25,6 +29,14 @@ public sealed class VisibilityGateTests : IAsyncLifetime
     private static readonly Guid DavePersonId      = Guid.Parse("44444444-4444-4444-4444-444444444444");
     private static readonly Guid OutsiderPersonId  = Guid.Parse("55555555-5555-5555-5555-555555555555");
     private static readonly Guid AuthorPersonId    = Guid.Empty;
+
+    private static readonly string[] WholeTenantTreeEmails =
+        { "outsider@example.com", "carol@example.com", "bob@example.com", "alice@example.com", "dave@example.com" };
+    private static readonly string[] BobSubtreeWithOutsider =
+        { "outsider@example.com", "bob@example.com", "alice@example.com", "dave@example.com" };
+    private static readonly string[] BobAndDescendants =
+        { "bob@example.com", "alice@example.com", "dave@example.com" };
+    private static readonly string[] OutsiderOnly = { "outsider@example.com" };
 
     private readonly MariaDbFixture _fixture;
 
@@ -50,92 +62,82 @@ public sealed class VisibilityGateTests : IAsyncLifetime
     // ── Self ────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Self_lookup_succeeds_without_any_grant()
+    public async Task Self_lookup_returns_caller_as_forest_root()
     {
-        // Alice queries herself, no visibility row anywhere — the
-        // self short-circuit in VisibilityService returns true.
+        // Alice has no grant. Self-lookup roots the forest at her own
+        // node; the ignored email path segment does not affect it.
         using var app = new TestApplicationFactory(
             _fixture.ConnectionString, TenantId, defaultCallerPersonId: AlicePersonId);
         var client = app.CreateClient();
 
-        var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
-            .ConfigureAwait(false);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var doc = await GetForestAsync(client).ConfigureAwait(false);
+        doc.GetProperty("email").GetString().Should().Be("alice@example.com");
     }
 
     // ── Whole-tenant grant ──────────────────────────────────────────
 
     [Fact]
-    public async Task Whole_tenant_grant_lets_caller_see_anyone()
+    public async Task Whole_tenant_grant_expands_entire_tenant_tree()
     {
-        // Outsider has a whole-tenant grant (viewed_person_id IS NULL).
+        // Outsider has a whole-tenant grant (viewed_person_id IS NULL):
+        // the forest is Outsider unioned with every tenant root subtree,
+        // so the whole Carol → Bob → (Alice, Dave) tree surfaces.
         using var app = new TestApplicationFactory(
             _fixture.ConnectionString, TenantId, defaultCallerPersonId: OutsiderPersonId);
         await _fixture.SeedWholeTenantVisibilityAsync(TenantId, OutsiderPersonId).ConfigureAwait(false);
         var client = app.CreateClient();
 
-        var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
-            .ConfigureAwait(false);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var emails = CollectEmails(await GetForestAsync(client).ConfigureAwait(false));
+        emails.Should().BeEquivalentTo(WholeTenantTreeEmails);
     }
 
     // ── Subtree grant ───────────────────────────────────────────────
 
     [Fact]
-    public async Task Subtree_grant_on_parent_lets_caller_see_descendants()
+    public async Task Subtree_grant_on_parent_expands_that_subtree_only()
     {
-        // Outsider gets an explicit grant on Bob → can see Bob's
-        // subtree (Bob, Alice, Dave) but NOT Carol (Bob's parent).
+        // Outsider gets an explicit grant on Bob → the forest carries
+        // Bob's subtree (Bob, Alice, Dave) but NOT Carol (Bob's parent).
         using var app = new TestApplicationFactory(
             _fixture.ConnectionString, TenantId, defaultCallerPersonId: OutsiderPersonId);
         await InsertVisibilityAsync(viewerPersonId: OutsiderPersonId, viewedPersonId: BobPersonId).ConfigureAwait(false);
         var client = app.CreateClient();
 
-        (await client.GetAsync(new Uri("/v1/persons/bob@example.com",   UriKind.Relative)).ConfigureAwait(false))
-            .StatusCode.Should().Be(HttpStatusCode.OK);
-        (await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative)).ConfigureAwait(false))
-            .StatusCode.Should().Be(HttpStatusCode.OK);
-        (await client.GetAsync(new Uri("/v1/persons/dave@example.com",  UriKind.Relative)).ConfigureAwait(false))
-            .StatusCode.Should().Be(HttpStatusCode.OK);
-        (await client.GetAsync(new Uri("/v1/persons/carol@example.com", UriKind.Relative)).ConfigureAwait(false))
-            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var emails = CollectEmails(await GetForestAsync(client).ConfigureAwait(false));
+        emails.Should().Contain(BobSubtreeWithOutsider);
+        emails.Should().NotContain("carol@example.com");
     }
 
     // ── Org_chart descent of caller ─────────────────────────────────
 
     [Fact]
-    public async Task Caller_sees_own_descendants_via_org_chart_without_explicit_grant()
+    public async Task Caller_subtree_includes_own_descendants_via_org_chart()
     {
-        // Bob has no visibility row. The CTE seeds him as the viewer,
-        // then walks org_chart down to Alice and Dave (his reports).
-        // Carol (Bob's parent) is upward — not in the visible set.
+        // Bob has no visibility row. His own subtree walks org_chart
+        // down to Alice and Dave (his reports). Carol (Bob's parent) is
+        // upward — never appears in the forest.
         using var app = new TestApplicationFactory(
             _fixture.ConnectionString, TenantId, defaultCallerPersonId: BobPersonId);
         var client = app.CreateClient();
 
-        (await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative)).ConfigureAwait(false))
-            .StatusCode.Should().Be(HttpStatusCode.OK);
-        (await client.GetAsync(new Uri("/v1/persons/dave@example.com",  UriKind.Relative)).ConfigureAwait(false))
-            .StatusCode.Should().Be(HttpStatusCode.OK);
-        (await client.GetAsync(new Uri("/v1/persons/carol@example.com", UriKind.Relative)).ConfigureAwait(false))
-            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var emails = CollectEmails(await GetForestAsync(client).ConfigureAwait(false));
+        emails.Should().Contain(BobAndDescendants);
+        emails.Should().NotContain("carol@example.com");
     }
 
-    // ── Deny → 404 (no existence leak) ──────────────────────────────
+    // ── No grant → caller only ──────────────────────────────────────
 
     [Fact]
-    public async Task Outsider_with_no_grant_gets_404_on_existing_target()
+    public async Task Outsider_with_no_grant_sees_only_themselves()
     {
-        // Outsider has zero rows in visibility and isn't in org_chart.
-        // Alice exists in the tenant but is invisible to outsider —
-        // response shape is identical to "no such person" (404).
+        // Outsider has zero visibility rows and is absent from org_chart.
+        // The forest is just their own node — no other person leaks in.
         using var app = new TestApplicationFactory(
             _fixture.ConnectionString, TenantId, defaultCallerPersonId: OutsiderPersonId);
         var client = app.CreateClient();
 
-        var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
-            .ConfigureAwait(false);
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var emails = CollectEmails(await GetForestAsync(client).ConfigureAwait(false));
+        emails.Should().BeEquivalentTo(OutsiderOnly);
     }
 
     // ── Soft-delete excludes the grant ──────────────────────────────
@@ -144,8 +146,8 @@ public sealed class VisibilityGateTests : IAsyncLifetime
     public async Task Revoked_grant_is_ignored()
     {
         // Outsider once had a grant on Bob but it was revoked
-        // (valid_to set in the past). The CTE filters by valid_to IS
-        // NULL — revoked rows must not contribute to the visible set.
+        // (valid_to set in the past). Active-only grants drive the
+        // forest, so the revoked row contributes nothing.
         using var app = new TestApplicationFactory(
             _fixture.ConnectionString, TenantId, defaultCallerPersonId: OutsiderPersonId);
         await InsertVisibilityAsync(
@@ -154,9 +156,8 @@ public sealed class VisibilityGateTests : IAsyncLifetime
             validTo: new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc)).ConfigureAwait(false);
         var client = app.CreateClient();
 
-        var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
-            .ConfigureAwait(false);
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var emails = CollectEmails(await GetForestAsync(client).ConfigureAwait(false));
+        emails.Should().BeEquivalentTo(OutsiderOnly);
     }
 
     // ── Cross-tenant ────────────────────────────────────────────────
@@ -165,16 +166,48 @@ public sealed class VisibilityGateTests : IAsyncLifetime
     public async Task Grant_in_other_tenant_does_not_apply()
     {
         // Outsider has a whole-tenant grant in OtherTenantId but the
-        // request comes for TenantId — the CTE is tenant-scoped, so
-        // the foreign grant is invisible.
+        // request comes for TenantId — grants are tenant-scoped, so the
+        // foreign grant adds nothing to this tenant's forest.
         using var app = new TestApplicationFactory(
             _fixture.ConnectionString, TenantId, defaultCallerPersonId: OutsiderPersonId);
         await _fixture.SeedWholeTenantVisibilityAsync(OtherTenantId, OutsiderPersonId).ConfigureAwait(false);
         var client = app.CreateClient();
 
-        var response = await client.GetAsync(new Uri("/v1/persons/alice@example.com", UriKind.Relative))
+        var emails = CollectEmails(await GetForestAsync(client).ConfigureAwait(false));
+        emails.Should().BeEquivalentTo(OutsiderOnly);
+    }
+
+    // ── Forest helpers ──────────────────────────────────────────────
+
+    private static async Task<JsonElement> GetForestAsync(HttpClient client)
+    {
+        // The email segment is ignored by the endpoint; any value works.
+        var response = await client.GetAsync(new Uri("/v1/persons/ignored@example.com", UriKind.Relative))
             .ConfigureAwait(false);
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        return await response.ReadJsonAsync<JsonElement>().ConfigureAwait(false);
+    }
+
+    private static HashSet<string> CollectEmails(JsonElement root)
+    {
+        var acc = new HashSet<string>(StringComparer.Ordinal);
+        Walk(root, acc);
+        return acc;
+
+        static void Walk(JsonElement node, HashSet<string> into)
+        {
+            if (node.TryGetProperty("email", out var email) && email.ValueKind == JsonValueKind.String)
+            {
+                into.Add(email.GetString()!);
+            }
+            if (node.TryGetProperty("subordinates", out var subs) && subs.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var child in subs.EnumerateArray())
+                {
+                    Walk(child, into);
+                }
+            }
+        }
     }
 
     // ── POST /v1/profiles parity ────────────────────────────────────

@@ -128,6 +128,8 @@ public sealed class HeaderCallerContextTests
             => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
         public Task<IReadOnlyList<OrgChartEdge>> GetCurrentChildrenAsync(Guid tenantId, Guid parentPersonId, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
+        public Task<IReadOnlyList<Guid>> GetRootPersonIdsAsync(Guid tenantId, string orgChartSourceType, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
         public Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
         public Task<IReadOnlyList<Guid>> ResolvePersonIdsBySourceIdAsync(Guid tenantId, string sourceType, Guid sourceId, string value, CancellationToken cancellationToken)
@@ -151,6 +153,8 @@ public sealed class HeaderCallerContextTests
             => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
         public Task<IReadOnlyList<OrgChartEdge>> GetCurrentChildrenAsync(Guid tenantId, Guid parentPersonId, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
+        public Task<IReadOnlyList<Guid>> GetRootPersonIdsAsync(Guid tenantId, string orgChartSourceType, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
         public Task<IReadOnlyList<Guid>> ResolvePersonIdsByEmailAsync(Guid tenantId, string email, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
         public Task<IReadOnlyList<Guid>> ResolvePersonIdsBySourceIdAsync(Guid tenantId, string sourceType, Guid sourceId, string value, CancellationToken cancellationToken)

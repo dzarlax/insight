@@ -57,4 +57,28 @@ internal static class SqlOrgChart
           AND valid_to IS NULL
         ORDER BY insight_source_type, insight_source_id, child_person_id
         """;
+
+    /// <summary>
+    /// Forest roots of one tenant within a single source type: persons
+    /// that appear as a CURRENT parent but never as a CURRENT child. These
+    /// are the top-level nodes from which the whole-tenant tree expands —
+    /// used when a viewer holds a whole-tenant visibility grant. A person
+    /// with no parent and no children is not a root here (no edge), which
+    /// is fine: an isolated person has an empty tree to expand.
+    /// </summary>
+    public const string RootPersonsForTenant = """
+        SELECT DISTINCT oc.parent_person_id AS person_id
+        FROM org_chart oc
+        WHERE oc.insight_tenant_id   = @tenant_id
+          AND oc.insight_source_type = @org_source_type
+          AND oc.valid_to IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM org_chart c
+              WHERE c.insight_tenant_id   = oc.insight_tenant_id
+                AND c.insight_source_type = oc.insight_source_type
+                AND c.child_person_id     = oc.parent_person_id
+                AND c.valid_to IS NULL
+          )
+        """;
 }

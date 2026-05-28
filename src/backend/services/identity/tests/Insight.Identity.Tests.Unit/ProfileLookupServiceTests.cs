@@ -13,11 +13,15 @@ public sealed class ProfileLookupServiceTests
 
     private static readonly LookupOptions Options = LookupOptions.Default;
 
+    // These tests exercise email/source-id resolution only; the visibility
+    // reader is never consulted, so a no-grant stub satisfies the ctor.
+    private static readonly IVisibilityReader NoVisibility = new NoVisibilityReader();
+
     [Fact]
     public async Task Returns_NotFound_when_resolver_returns_empty_list()
     {
         var reader = new StubReader { ResolveEmail = Array.Empty<Guid>() };
-        var svc = new ProfileLookupService(reader, new PersonLookupService(reader));
+        var svc = new ProfileLookupService(reader, new PersonLookupService(reader, NoVisibility));
 
         var result = await svc.ResolveAsync(
             TenantId,
@@ -33,7 +37,7 @@ public sealed class ProfileLookupServiceTests
     {
         var ids = new[] { PersonId, Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee") };
         var reader = new StubReader { ResolveEmail = ids };
-        var svc = new ProfileLookupService(reader, new PersonLookupService(reader));
+        var svc = new ProfileLookupService(reader, new PersonLookupService(reader, NoVisibility));
 
         var result = await svc.ResolveAsync(
             TenantId,
@@ -54,7 +58,7 @@ public sealed class ProfileLookupServiceTests
             LatestObservations = Array.Empty<PersonObservation>(),
             CurrentSourceIds = Array.Empty<PersonSourceId>(),
         };
-        var svc = new ProfileLookupService(reader, new PersonLookupService(reader));
+        var svc = new ProfileLookupService(reader, new PersonLookupService(reader, NoVisibility));
 
         var result = await svc.ResolveAsync(
             TenantId,
@@ -69,7 +73,7 @@ public sealed class ProfileLookupServiceTests
     public async Task Routes_to_source_id_resolver_for_id_lookups()
     {
         var reader = new StubReader { ResolveSourceId = new[] { PersonId } };
-        var svc = new ProfileLookupService(reader, new PersonLookupService(reader));
+        var svc = new ProfileLookupService(reader, new PersonLookupService(reader, NoVisibility));
 
         var query = new ResolveProfileQuery(
             ResolveProfileKind.SourceId,
@@ -121,7 +125,25 @@ public sealed class ProfileLookupServiceTests
         public Task<IReadOnlyList<OrgChartEdge>> GetCurrentChildrenAsync(Guid tenantId, Guid parentPersonId, CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<OrgChartEdge>>(Array.Empty<OrgChartEdge>());
 
+        public Task<IReadOnlyList<Guid>> GetRootPersonIdsAsync(Guid tenantId, string orgChartSourceType, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Guid>>(Array.Empty<Guid>());
+
         public Task<Guid?> ResolvePersonIdByAccountIdAsync(Guid tenantId, string accountId, CancellationToken cancellationToken)
             => Task.FromResult<Guid?>(null);
+    }
+
+    private sealed class NoVisibilityReader : IVisibilityReader
+    {
+        public Task<IReadOnlyList<Visibility>> GetActiveVisibilityGrantsByViewerAsync(Guid tenantId, Guid viewerPersonId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Visibility>>(Array.Empty<Visibility>());
+
+        public Task<bool> IsTargetInVisibleSetAsync(Guid tenantId, Guid viewerPersonId, Guid targetPersonId, string orgChartSourceType, CancellationToken cancellationToken)
+            => Task.FromResult(false);
+
+        public Task<Visibility?> GetByIdAsync(Guid tenantId, Guid visibilityId, CancellationToken cancellationToken)
+            => Task.FromResult<Visibility?>(null);
+
+        public Task<PagedResult<Visibility>> ListAsync(Guid tenantId, Guid? filterByViewer, Guid? filterByViewed, bool activeOnly, PageRequest page, CancellationToken cancellationToken)
+            => throw new NotSupportedException("ListAsync is not used by ProfileLookupServiceTests.");
     }
 }
