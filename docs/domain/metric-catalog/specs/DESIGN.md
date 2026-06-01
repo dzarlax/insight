@@ -310,7 +310,7 @@ The catalog has four first-class types. Three are persisted (`Metric`, `Threshol
 - **Metric 1 — N AuditEvent** by `metric_key`. Loose pointer; same no-FK rationale; CRUD does not validate metric existence on audit emits (audit must succeed even if a metric is later disabled).
 - **Threshold 0 — N AuditEvent** by `blocking_row_id` (`bypass_attempt`) and / or by the row whose lock toggled (`lock_set`, `lock_cleared`). Loose UUID reference — no FK; the audit row survives deletion of the threshold row.
 - **Threshold 1 — 1 ResolvedThreshold** per (metric, request-context) walk. `ResolvedThreshold` is ephemeral, constructed from one or more `Threshold` candidate rows; never stored.
-- **Metric ↔ `analytics.metrics.query_ref`** by `metric_key`. Loose pointer; no FK; opacity preserved (catalog never opens `query_ref`) per PRD §1.1 layer boundary.
+- **Metric ↔ `analytics.metrics.query_ref`** by `metric_key`. The string-level pointer is unchanged: catalog still never opens, parses, or stores `query_ref`, so opacity per PRD §1.1 layer boundary is preserved. A separate **referential** link exists via the `metric_query_catalog` junction table (§3.7) — it carries M:N FKs `(metrics.id, metric_catalog.id)` so the question "which catalog rows does this query emit" / "which queries back this catalog row" has a structurally enforced answer. The junction adds referential integrity only; neither side gains a column that reveals the other's payload.
 
 ### 3.2 Component Model
 
@@ -789,7 +789,7 @@ All nine components live inside the `analytics-api` crate; the catalog has no in
 |------------|-----------|---------|
 | MariaDB (10.3+) | SeaORM (migrations + entities) | Persistence for `metric_catalog`, `metric_threshold`, and `threshold_lock_audit`; 10.3+ is required for reliable CHECK enforcement (`cpt-metric-cat-constraint-mariadb-check`) — a startup probe asserts the CHECKs exist via `INFORMATION_SCHEMA.CHECK_CONSTRAINTS`. |
 | Cache backend (Redis OR in-process LRU + pub-sub) | `CacheLayer` trait (`cpt-metric-cat-component-cache-layer`) | Server-side cache for `POST /catalog/get_metrics` and the carrier of cross-replica invalidation; concrete mechanism is `cpt-metric-cat-design-oq-cache-mechanism`. |
-| `analytics.metrics` table | Read-only (loose pointer) | Holds the existing `query_ref` rows; `metric_catalog.metric_key` aligns loosely with the metric keys it emits. No FK; opacity preserved per PRD §1.1 layer boundary. |
+| `analytics.metrics` table | Read-only (string pointer) + M:N referential link | Holds the existing `query_ref` rows; `metric_catalog.metric_key` aligns by string with the metric keys each query emits. A separate `metric_query_catalog` junction table (§3.7) carries M:N FKs `(metrics.id, metric_catalog.id)` to make "which catalog rows does this query emit" structurally enforced. Catalog still never opens `query_ref`; opacity per PRD §1.1 layer boundary is preserved (the junction carries only IDs, not the SQL payload). |
 | ClickHouse `system.columns` | Read-only schema introspection | Used by `cpt-metric-cat-component-schema-validator` to confirm each metric's `table.column` reference exists; result is cached on `metric_catalog.schema_status` so reads never hit ClickHouse on the request path. |
 | `modkit-canonical-errors` (cyberfabric-core Rust crate) | `CanonicalError` enum + RFC 9457 `Problem` serializer + `#[resource_error]` macro | Every 4xx / 5xx response across catalog endpoints is constructed through this crate per the §3.3 error envelope. Aligns the catalog's wire shape with DNA `REST/API.md §7` and other cyberfabric services so a shared client error handler works across the platform. |
 | analytics-api Helm chart (`src/backend/services/analytics-api/helm/values.yaml`) | `tenantDefaultId` (UUID, optional) → env var `ANALYTICS__metric_catalog__tenant_default_id` → Rust config `metric_catalog.tenant_default_id` | Single-tenant fallback consumed by `cpt-metric-cat-component-auth-trait.resolve_tenant` per `cpt-metric-cat-constraint-tenant-default`. Multi-tenant installs leave it unset. Mirrors `IDENTITY__identity__tenant_default_id` in the identity service. |
@@ -1094,6 +1094,37 @@ The catalog owns three MariaDB tables. v1 invariants are enforced at both the DB
 |----|------------|----------|-----------|------------|-----------------|----------------|-----------------|----------|
 | `a1...` | `lock_set` | `u-alice` | `t-acme` | `tasks_closed` | NULL | NULL | NULL | 2026-05-12 14:02:11Z |
 | `b2...` | `bypass_attempt` | `u-bob` | `t-acme` | `tasks_closed` | role | tenant | `7af...` | 2026-05-13 09:18:33Z |
+
+#### Table: metric_query_catalog
+
+- **Purpose**: Junction table that records the M:N referential link between `metrics` rows (each one a single ClickHouse `query_ref`) and the `metric_catalog` rows whose `metric_key` values that query emits. Answers two structurally otherwise-unanswerable questions: "given a query, which catalog rows does it emit?" and "given a catalog row, which query backs it?". Adds referential integrity only — neither side gains a column that reveals the other's payload, so PRD §1.1 layer-boundary opacity is preserved (the catalog still never opens `query_ref`).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | BINARY(16) PK | UUIDv7 generated in Rust at backfill time. Stable identity for the junction row itself. |
+| `metrics_id` | BINARY(16) NOT NULL | FK → `metrics(id)` ON DELETE CASCADE. Removal of a query row tears down its junction rows; the surviving catalog rows are unaffected. |
+| `metric_catalog_id` | BINARY(16) NOT NULL | FK → `metric_catalog(id)` ON DELETE CASCADE. Removal of a catalog row tears down its junction rows; the surviving query rows are unaffected (their `query_ref` may still emit the same `metric_key` — the next catalog re-seed re-establishes the link). |
+| `created_at` | TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP | Backfill / re-seed audit. Never mutated (no ON UPDATE). |
+
+**Constraints**:
+- UNIQUE composite on `(metrics_id, metric_catalog_id)` — a pair appears at most once. Doubles as the supporting index for "given a query, list its catalog rows" (leftmost-prefix).
+- No CHECK constraints in v1 (the FKs carry the referential-integrity invariant). Listed in `REQUIRED_CHECKS_BY_TABLE` as an empty slice so the startup-probe-coverage test in `migration/mod.rs` doesn't grow a special case.
+
+**Indexes**:
+- Primary index on `id`.
+- UNIQUE `(metrics_id, metric_catalog_id)` (above).
+- Index on `metric_catalog_id` — supports the reverse direction ("given a catalog row, list backing queries") and lets the FK constraint check on `metric_catalog` deletes avoid a full junction scan.
+
+**Owned by**: `cpt-metric-cat-component-seed-migration` (backfill in `m20260529_000001_metric_query_catalog_link`); catalog-reader (future read path — out of v1 scope; the table is queryable for diagnostics but no read endpoint is wired in v1).
+
+**Example**:
+
+| id | metrics_id | metric_catalog_id | created_at |
+|----|------------|-------------------|------------|
+| `c3...` | `…0003` (Team Bullet Task Delivery) | `…tasks_completed` | 2026-05-29 11:00:00Z |
+| `c4...` | `…0011` (IC Bullet Task Delivery)   | `…tasks_completed` | 2026-05-29 11:00:00Z |
+
+Both rows point at the same catalog row because both queries pivot the same `task_delivery_bullet_rows` storage table.
 
 ### 3.8 Deployment Topology
 
