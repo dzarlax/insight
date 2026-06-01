@@ -49,9 +49,16 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
 }
 
 async fn drop_catalog_tables(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
-    // Reverse-dependency order. None of the v1 catalog tables have FKs, but
-    // keeping the order obvious helps when future FK migrations land.
-    for table in ["threshold_lock_audit", "metric_threshold", "metric_catalog"] {
+    // Reverse-dependency order. `metric_query_catalog` (ADR-001, m20260529)
+    // has FKs into both `metric_catalog` and `metrics` with `ON DELETE
+    // CASCADE` — drop it FIRST or the parent drops fail with MariaDB
+    // error 1451.
+    for table in [
+        "metric_query_catalog",
+        "threshold_lock_audit",
+        "metric_threshold",
+        "metric_catalog",
+    ] {
         db.execute_unprepared(&format!("DROP TABLE IF EXISTS {table}"))
             .await?;
     }
@@ -62,14 +69,18 @@ async fn drop_catalog_tables(db: &DatabaseConnection) -> Result<(), sea_orm::DbE
     // assertion failures when the probe saw migration rows out of sync with
     // the actual schema).
     //
-    // Covers both the schema migrations (`m20260522_*`: catalog, threshold,
-    // audit) and the seed migration (`m20260527_*`: Refs #523). Any future
-    // catalog-domain migration must extend this OR pattern — otherwise a
-    // partial replay leaves catalog tables empty (schema reapplied, seed
-    // skipped) and downstream invariants break in confusing ways.
+    // Covers the schema migrations (`m20260522_*`: catalog / threshold /
+    // audit), the seed migration (`m20260527_*`: Refs #523), and the
+    // junction-table migration (`m20260529_*`: ADR-001
+    // `metric_query_catalog`). Any future catalog-domain migration must
+    // extend this OR pattern — otherwise a partial replay leaves catalog
+    // tables empty (schema reapplied, seed skipped) and downstream
+    // invariants break in confusing ways.
     db.execute_unprepared(
         "DELETE FROM seaql_migrations \
-         WHERE version LIKE 'm20260522_%' OR version LIKE 'm20260527_%'",
+         WHERE version LIKE 'm20260522_%' \
+            OR version LIKE 'm20260527_%' \
+            OR version LIKE 'm20260529_%'",
     )
     .await?;
     Ok(())
