@@ -64,13 +64,13 @@
         {%- if not loop.last %} UNION ALL {% endif %}
       {%- endfor %}
       ) AS _ubt
-      {%- if dedup_version_col %}
-      {#- One row per unique_key, latest {{ dedup_version_col }} wins. -#}
+      {% if dedup_version_col %}
+      {# One row per unique_key, latest version wins. #}
       QUALIFY ROW_NUMBER() OVER (PARTITION BY unique_key ORDER BY {{ dedup_version_col }} DESC) = 1
-      {%- else %}
-      {#- Versionless RMT (no _version column): any row per unique_key. -#}
+      {% else %}
+      {# Versionless RMT (no _version column): any row per unique_key. #}
       LIMIT 1 BY unique_key
-      {%- endif -%}
+      {% endif %}
     {%- endif -%}
   {%- else -%}
     SELECT 1 AS _placeholder WHERE FALSE
