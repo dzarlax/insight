@@ -99,12 +99,6 @@ models:
       orphan-identity rows in Silver — Silver Step 2 (Identity Resolution)
       then maps email / api_key_id → person_id.
 
-      Note: the initial PRD §5.7 required actor_type='user' only. Real
-      Virtuozzo data showed 100% of activity arrives as api_actor (the org
-      provisions named per-developer API keys), so strict user-only
-      filtering would yield zero rows in production. Dual-actor support
-      is the intended behaviour; the PRD clause is to be updated.
-
       For orgs on the Enterprise subscription, Claude Code is sourced from
       claude_enterprise__ai_dev_usage instead (Enterprise reports per-user
       directly, avoiding api_key_name resolution). This model remains available

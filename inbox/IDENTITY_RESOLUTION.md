@@ -29,7 +29,7 @@ Each source normalizes raw data into `(source, source_id, token)` tuples. A sing
 
 ## Walkthrough Example
 
-The following example traces one person — Alexei Vavilov — through the entire pipeline. He appears across three source systems under different usernames and emails.
+The following example traces one person — Andrei Sokolov — through the entire pipeline. He appears across three source systems under different usernames and emails.
 
 ### Source Data
 
@@ -37,21 +37,21 @@ The following example traces one person — Alexei Vavilov — through the entir
 
 | id | first_name | last_name | work_email |
 |---|---|---|---|
-| b1 | Alexei | Vavilov | Alexei.Vavilov@alemira.com |
+| b1 | Andrei | Sokolov | Andrei.Sokolov@acme.io |
 
 **Git commits:**
 
 | hash | author | email |
 |---|---|---|
-| c1 | he4et | he4ethb1u@gmail.com |
-| c2 | he4et | he4et@oddsquat.org |
-| c3 | he4et | a.vavilov@gmail.com |
+| c1 | sokol | sokol91@gmail.com |
+| c2 | sokol | sokol@example.org |
+| c3 | sokol | a.sokolov@gmail.com |
 
 **YouTrack:**
 
 | id | username | email |
 |---|---|---|
-| y1 | Alexey Vavilov | a.vavilov@constructor.tech |
+| y1 | Andrey Sokolov | a.sokolov@acme.com |
 
 ### Step 1 — Unified References
 
@@ -59,22 +59,22 @@ Each source record is decomposed into `(source, source_id, token, rid, meta)` tu
 
 | source | source_id | token | rid | meta |
 |---|---|---|---|---|
-| bamboo | b1 | alexei vavilov | h1 | |
-| bamboo | b1 | alexei.vavilov@alemira.com | h1 | |
-| git | c1 | he4et | h2 | |
-| git | c1 | he4ethb1u@gmail.com | h2 | |
-| git | c2 | he4et | h3 | |
-| git | c2 | he4et@oddsquat.org | h3 | |
-| git | c3 | he4et | h4 | |
-| git | c3 | a.vavilov@gmail.com | h4 | |
-| youtrack | y1 | alexey vavilov | h5 | |
-| youtrack | y1 | a.vavilov@constructor.tech | h5 | |
+| bamboo | b1 | andrei sokolov | h1 | |
+| bamboo | b1 | andrei.sokolov@acme.io | h1 | |
+| git | c1 | sokol | h2 | |
+| git | c1 | sokol91@gmail.com | h2 | |
+| git | c2 | sokol | h3 | |
+| git | c2 | sokol@example.org | h3 | |
+| git | c3 | sokol | h4 | |
+| git | c3 | a.sokolov@gmail.com | h4 | |
+| youtrack | y1 | andrey sokolov | h5 | |
+| youtrack | y1 | a.sokolov@acme.com | h5 | |
 
 At this point the algorithm can already group some records. Running min-propagation on this data produces **3 groups**:
 
 | Group | Members | Connected by |
 |---|---|---|
-| 1 | h2, h3, h4 | shared token `he4et` |
+| 1 | h2, h3, h4 | shared token `sokol` |
 | 2 | h1 | isolated — no shared tokens |
 | 3 | h5 | isolated — no shared tokens |
 
@@ -87,7 +87,7 @@ Injects **synthetic bridge records** from a seed table. Each pair forces two acc
 This step does not apply to our example, but a pair like:
 
 ```
-v.samun@examus.net  <->  vsamun@examus.net
+p.jones@example.net  <->  pjones@example.net
 ```
 
 would create synthetic records that bridge two otherwise unrelated accounts.
@@ -104,17 +104,17 @@ Alias seed data (excerpt):
 
 | first_name | alias |
 |---|---|
-| alexei | alexey |
-| alexey | alexei |
+| andrei | andrey |
+| andrey | andrei |
 
-Applied to our example — the bamboo record has username "alexei vavilov" which contains whole word "alexei", and the youtrack record has "alexey vavilov" which contains "alexey":
+Applied to our example — the bamboo record has username "andrei sokolov" which contains whole word "andrei", and the youtrack record has "andrey sokolov" which contains "andrey":
 
 | source | source_id | token | rid | meta |
 |---|---|---|---|---|
-| bamboo | b1 | alexey vavilov | h1 | alias: a1 |
-| youtrack | y1 | alexei vavilov | h5 | alias: a2 |
+| bamboo | b1 | andrey sokolov | h1 | alias: a1 |
+| youtrack | y1 | andrei sokolov | h5 | alias: a2 |
 
-Now `h1` and `h5` share the token "alexey vavilov" (and also "alexei vavilov") — they are connected.
+Now `h1` and `h5` share the token "andrey sokolov" (and also "andrei sokolov") — they are connected.
 
 ### Step 3b — Email Domain Aliases
 
@@ -125,23 +125,23 @@ Domain alias seed data (excerpt):
 | domain |
 |---|
 | gmail.com |
-| alemira.com |
-| constructor.tech |
+| acme.io |
+| acme.com |
 
 Applied to our example — every email on a listed domain gets variants for the other domains:
 
 | source | source_id | token | rid | meta |
 |---|---|---|---|---|
-| bamboo | b1 | alexei.vavilov@gmail.com | h1 | domain: d1 |
-| bamboo | b1 | alexei.vavilov@constructor.tech | h1 | domain: d3 |
-| git | c1 | he4ethb1u@alemira.com | h2 | domain: d2 |
-| git | c1 | he4ethb1u@constructor.tech | h2 | domain: d3 |
-| git | c3 | a.vavilov@alemira.com | h4 | domain: d2 |
-| git | c3 | a.vavilov@constructor.tech | h4 | domain: d3 |
-| youtrack | y1 | a.vavilov@alemira.com | h5 | domain: d2 |
-| youtrack | y1 | a.vavilov@gmail.com | h5 | domain: d1 |
+| bamboo | b1 | andrei.sokolov@gmail.com | h1 | domain: d1 |
+| bamboo | b1 | andrei.sokolov@acme.com | h1 | domain: d3 |
+| git | c1 | sokol91@acme.io | h2 | domain: d2 |
+| git | c1 | sokol91@acme.com | h2 | domain: d3 |
+| git | c3 | a.sokolov@acme.io | h4 | domain: d2 |
+| git | c3 | a.sokolov@acme.com | h4 | domain: d3 |
+| youtrack | y1 | a.sokolov@acme.io | h5 | domain: d2 |
+| youtrack | y1 | a.sokolov@gmail.com | h5 | domain: d1 |
 
-Now `h4` (git c3) and `h5` (youtrack y1) share the token "a.vavilov@gmail.com" — another connection.
+Now `h4` (git c3) and `h5` (youtrack y1) share the token "a.sokolov@gmail.com" — another connection.
 
 ### Full Token Table After Enrichment
 
@@ -149,26 +149,26 @@ Combining all real and synthetic records:
 
 | source | source_id | token | rid | meta |
 |---|---|---|---|---|
-| bamboo | b1 | alexei vavilov | h1 | |
-| bamboo | b1 | alexei.vavilov@alemira.com | h1 | |
-| git | c1 | he4et | h2 | |
-| git | c1 | he4ethb1u@gmail.com | h2 | |
-| git | c2 | he4et | h3 | |
-| git | c2 | he4et@oddsquat.org | h3 | |
-| git | c3 | he4et | h4 | |
-| git | c3 | a.vavilov@gmail.com | h4 | |
-| youtrack | y1 | alexey vavilov | h5 | |
-| youtrack | y1 | a.vavilov@constructor.tech | h5 | |
-| bamboo | b1 | alexey vavilov | h1 | alias: a1 |
-| youtrack | y1 | alexei vavilov | h5 | alias: a2 |
-| bamboo | b1 | alexei.vavilov@gmail.com | h1 | domain: d1 |
-| bamboo | b1 | alexei.vavilov@constructor.tech | h1 | domain: d3 |
-| git | c1 | he4ethb1u@alemira.com | h2 | domain: d2 |
-| git | c1 | he4ethb1u@constructor.tech | h2 | domain: d3 |
-| git | c3 | a.vavilov@alemira.com | h4 | domain: d2 |
-| git | c3 | a.vavilov@constructor.tech | h4 | domain: d3 |
-| youtrack | y1 | a.vavilov@alemira.com | h5 | domain: d2 |
-| youtrack | y1 | a.vavilov@gmail.com | h5 | domain: d1 |
+| bamboo | b1 | andrei sokolov | h1 | |
+| bamboo | b1 | andrei.sokolov@acme.io | h1 | |
+| git | c1 | sokol | h2 | |
+| git | c1 | sokol91@gmail.com | h2 | |
+| git | c2 | sokol | h3 | |
+| git | c2 | sokol@example.org | h3 | |
+| git | c3 | sokol | h4 | |
+| git | c3 | a.sokolov@gmail.com | h4 | |
+| youtrack | y1 | andrey sokolov | h5 | |
+| youtrack | y1 | a.sokolov@acme.com | h5 | |
+| bamboo | b1 | andrey sokolov | h1 | alias: a1 |
+| youtrack | y1 | andrei sokolov | h5 | alias: a2 |
+| bamboo | b1 | andrei.sokolov@gmail.com | h1 | domain: d1 |
+| bamboo | b1 | andrei.sokolov@acme.com | h1 | domain: d3 |
+| git | c1 | sokol91@acme.io | h2 | domain: d2 |
+| git | c1 | sokol91@acme.com | h2 | domain: d3 |
+| git | c3 | a.sokolov@acme.io | h4 | domain: d2 |
+| git | c3 | a.sokolov@acme.com | h4 | domain: d3 |
+| youtrack | y1 | a.sokolov@acme.io | h5 | domain: d2 |
+| youtrack | y1 | a.sokolov@gmail.com | h5 | domain: d1 |
 
 ### Step 4 — Identity Resolution (Min-Propagation)
 
@@ -178,18 +178,18 @@ The algorithm groups records by shared tokens. Each `(token, rid)` pair is a seg
 
 | Shared token | Connects |
 |---|---|
-| `he4et` | h2, h3, h4 |
-| `alexey vavilov` | h1 (alias), h5 |
-| `alexei vavilov` | h1, h5 (alias) |
-| `a.vavilov@gmail.com` | h4, h5 (domain) |
+| `sokol` | h2, h3, h4 |
+| `andrey sokolov` | h1 (alias), h5 |
+| `andrei sokolov` | h1, h5 (alias) |
+| `a.sokolov@gmail.com` | h4, h5 (domain) |
 
 **Transitive closure:**
 
 ```
-h2 ←— "he4et" —→ h3
-h2 ←— "he4et" —→ h4
-h4 ←— "a.vavilov@gmail.com" —→ h5
-h5 ←— "alexey vavilov" —→ h1
+h2 ←— "sokol" —→ h3
+h2 ←— "sokol" —→ h4
+h4 ←— "a.sokolov@gmail.com" —→ h5
+h5 ←— "andrey sokolov" —→ h1
 
 Result: h1, h2, h3, h4, h5 → profile_group_id = 1
 ```
@@ -244,7 +244,7 @@ The input is a table of `(token, rid)` pairs. The algorithm finds connected comp
 3. **Converge** — after enough iterations, all transitively connected rids share the same minimum group ID.
 4. **Rank** — `dense_rank()` converts raw group IDs into sequential `profile_group_id` values.
 
-Matching is always on **full token values** — token "he4et" matches token "he4et", not a substring of "he4et123".
+Matching is always on **full token values** — token "sokol" matches token "sokol", not a substring of "sokol123".
 
 ### Blacklist
 
@@ -262,7 +262,7 @@ This section collects approaches for discovering identity connections that the c
 
 ### Fuzzy Last Name Search in Email Local Parts
 
-**Problem:** A person's email local part may contain a misspelled or abbreviated last name that exact matching will never catch. For example, `avavilov@gmail.com` (missing letter) won't match the username "alexei vavilov" — there is no shared token.
+**Problem:** A person's email local part may contain a misspelled or abbreviated last name that exact matching will never catch. For example, `asokolov@gmail.com` (missing letter) won't match the username "andrei sokolov" — there is no shared token.
 
 **Idea:** Extract last names (or rare name parts) from all sources and use them as search queries against email local parts across all unresolved records. Rank results by character-level similarity:
 
@@ -273,17 +273,17 @@ This section collects approaches for discovering identity connections that the c
 
 **Example:**
 
-Search term: `vavilov` (extracted last name)
+Search term: `sokolov` (extracted last name)
 
 Candidates are email local parts split into words by non-letter characters. The best-matching word determines the score:
 
 | candidate (raw) | words | best match | matched letters | length diff | score |
 |---|---|---|---|---|---|
-| a.vavilov | a, vavilov | vavilov | 7/7 | 0 | high |
-| avavilov | avavilov | avavilov | 7/7 | +1 | high |
-| vavilov123 | vavilov | vavilov | 7/7 | 0 | high |
-| vavlov | vavlov | vavlov | 3/7 | -1 | low |
-| vavilova | vavilova | vavilova | 7/7 | +1 | high |
+| a.sokolov | a, sokolov | sokolov | 7/7 | 0 | high |
+| asokolov | asokolov | asokolov | 7/7 | +1 | high |
+| sokolov123 | sokolov | sokolov | 7/7 | 0 | high |
+| soklov | soklov | soklov | 3/7 | -1 | low |
+| sokolova | sokolova | sokolova | 7/7 | +1 | high |
 | ivanov | ivanov | ivanov | 2/7 | -1 | low |
 
 This kind of search cannot be used for automatic merging — the false positive rate is too high. Instead, it should produce a **review list** of candidate pairs for manual verification. Confirmed pairs are then added to the `identity_pairs` seed table.

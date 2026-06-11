@@ -27,7 +27,7 @@ decision-makers: platform-engineering
 **ID**: `cpt-insightspec-adr-adoption-of-existing-resources`
 ## Context and Problem Statement
 
-Legacy clusters (e.g., virtuozzo, observed 2026-05-04) already have running Airbyte sources and connections that were created by the pre-refactor `register.sh` and `connect.sh` scripts. Each connection has accumulated Airbyte sync state (per-stream cursors). The new reconcile engine introduced by ADR-0001 expects each connection to carry an `insight` membership tag plus a `cfg-hash:<sha256(secret.data)>` tag, and each definition to carry the descriptor version in its `description` field — none of which exist on legacy resources.
+Clusters provisioned before this refactor already have running Airbyte sources and connections that were created by the pre-refactor `register.sh` and `connect.sh` scripts. Each connection has accumulated Airbyte sync state (per-stream cursors). The new reconcile engine introduced by ADR-0001 expects each connection to carry an `insight` membership tag plus a `cfg-hash:<sha256(secret.data)>` tag, and each definition to carry the descriptor version in its `description` field — none of which exist on legacy resources.
 
 How do we bring legacy resources under the new declarative model **without** recreating any source or connection — i.e., without losing sync state and without forcing a full historical re-fetch?
 
@@ -81,7 +81,7 @@ Delete every existing source and connection; let the new reconcile pass create t
 
 ### Option B — Rename to canonical pattern with version-encoded names
 
-Rename existing sources and connections to a name pattern that encodes the descriptor version, e.g., `bamboohr-bamboohr-main-virtuozzo-v2026.05.04`.
+Rename existing sources and connections to a name pattern that encodes the descriptor version, e.g., `bamboohr-bamboohr-main-acme-v2026.05.04`.
 
 - Good, because metadata stays inside the resource itself.
 - Neutral, because Airbyte does not strongly index by name — querying "all our resources" becomes a substring scan.
@@ -102,7 +102,7 @@ Rename existing sources and connections to a name pattern that encodes the descr
 ## More Information
 
 - Sequence: `cpt-insightspec-seq-adopt-one-shot` in `DESIGN.md` §3.6 details the API call order.
-- Tag verification (2026-05-04, virtuozzo): `POST /api/public/v1/tags` to create the `insight` tag, `PATCH /api/public/v1/connections/{id}` to attach, `GET /api/public/v1/connections?tagIds=<id>` to query — all three round-tripped successfully.
+- Tag verification against a live Airbyte instance: `POST /api/public/v1/tags` to create the `insight` tag, `PATCH /api/public/v1/connections/{id}` to attach, `GET /api/public/v1/connections?tagIds=<id>` to query — all three round-tripped successfully.
 - Related decisions:
   - `cpt-insightspec-adr-version-driven-reconcile` (ADR-0001) — provides the version anchor that adoption sets.
   - `cpt-insightspec-adr-credential-rotation-no-env` (ADR-0003) — explains why `cfg-hash` is computed from K8s Secret, not from Airbyte's masked credential view.

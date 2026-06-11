@@ -53,7 +53,7 @@ Chosen option: **Option C — `sources/update` on cfg-hash mismatch**.
 
 ### Consequences
 
-- **Good**, because no infrastructure addition: works on virtuozzo and any future cluster as-is.
+- **Good**, because no infrastructure addition: works on any cluster as-is.
 - **Good**, because state is preserved: `sources/update` is documented to keep the source's `sourceId` and the connection's `connectionId`.
 - **Good**, because rotation cost is one API call per rotated Secret, not a full reconcile cycle.
 - **Good**, because the rotation event is observable via Airbyte's audit logs (`sources/update` is a discrete, logged operation).

@@ -175,7 +175,7 @@ For gitops production, L2 system services (stateful infra in `insight-infra`) an
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-dep-customer-named-envs`
 
-The gitops repo has no generic "prod". Internal envs (`dev`, `test`, `stage`) and customer-named envs (`virtuozzo`, `constructor`, `acronis`, …) each get their own directory, their own `.insight-version` history (via merge requests for non-auto envs), and their own per-env `CONFIRM=yes-deploy-<env>` token. The chart itself is environment-agnostic; the env model lives in the gitops Makefile.
+The gitops repo has no generic "prod". Internal envs (`dev`, `test`, `stage`) and customer-named envs (`acme`, `globex`, …) each get their own directory, their own `.insight-version` history (via merge requests for non-auto envs), and their own per-env `CONFIRM=yes-deploy-<env>` token. The chart itself is environment-agnostic; the env model lives in the gitops Makefile.
 
 **ADRs**: none.
 
@@ -757,7 +757,7 @@ Not applicable. The Deployment subsystem stores no data; it produces a chart art
 - **Airbyte cross-namespace URL.** The chart's `insight.airbyte.url` helper currently uses `.Release.Namespace` (`insight`). In the layered model Airbyte runs in `insight-infra`, so analytics-api would 404 on real ingestion calls. Parameterise `airbyte.namespace` (or compute the FQDN from a values field). Tracked as a chart-side SPEC §8 follow-up.
 - **Cross-namespace host defaults for L2 services.** When `<svc>.deploy: false`, the chart still `required`-s `<svc>.host`. Default it to `<release>.insight-infra.svc.cluster.local` (the layered-model convention) so env values stay minimal. Tracked.
 - **Artifact signing (images + chart).** Neither images nor the chart are cosign-signed today. Plan: sign at publish time, `chart-present` verifies the chart signature before allowing deploy, image admission policy verifies signatures. See the [gitops SPEC §8 open items](../gitops/README.md#8-open-items).
-- **GHCR retention for old umbrella tags.** Long-lived production pins (`virtuozzo`, `constructor`, …) should mirror to a self-hosted registry against GHCR retention deleting the tagged artifact. Documented in the gitops SPEC §8.
+- **GHCR retention for old umbrella tags.** Long-lived production pins (customer envs) should mirror to a self-hosted registry against GHCR retention deleting the tagged artifact. Documented in the gitops SPEC §8.
 - **Migration to in-cluster ArgoCD.** The Makefile-driven manual deploy is an MVP shortcut for Cyberfabric SRE. The contract (one `values.yaml` per env, sealed secrets per namespace, `.insight-version` pin) is designed to survive a switch to an in-cluster ArgoCD picking up the same gitops repo; only the trigger mechanism changes from `make deploy` to ArgoCD reconciliation.
 
 **Open questions**:

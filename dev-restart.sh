@@ -20,7 +20,7 @@
 #
 # Usage:
 #   ./dev-restart.sh                  # default: --env local
-#   ./dev-restart.sh --env virtuozzo  # remote env (just verify connectivity)
+#   ./dev-restart.sh --env remote     # remote env (just verify connectivity)
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

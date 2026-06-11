@@ -33,12 +33,13 @@ WITH src AS (
         properties_dealname                             AS name,
         properties_hs_manual_forecast_category          AS forecast_category,
         properties_dealstage                            AS stage,
-        -- `amount` is the raw deal-currency line-item value (Constructor's
-        -- school subscriptions are often quoted monthly here). `amount_home`
+        -- `amount` is the raw deal-currency line-item value and may be
+        -- quoted per billing period rather than annualized. `amount_home`
         -- is HubSpot's home-currency conversion — use this for cross-rep
         -- aggregates. `hs_acv` / `hs_tcv` / `hs_arr` are HubSpot-computed
-        -- contract-level rollups from line items; populated on ~10% of
-        -- Constructor's deals, so expose them as nullable for selective use.
+        -- contract-level rollups from line items; typically populated on
+        -- only a minority of deals, so expose them as nullable for
+        -- selective use.
         toFloat64OrNull(properties_amount)                    AS amount,
         toFloat64OrNull(properties_amount_in_home_currency)   AS amount_home,
         toFloat64OrNull(properties_hs_acv)                    AS acv,

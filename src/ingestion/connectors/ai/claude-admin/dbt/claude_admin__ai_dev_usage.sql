@@ -7,14 +7,13 @@
 --   • actor_type='user'      → actor_identifier = user email
 --                              email column populated, api_key_id NULL
 --   • actor_type='api_actor' → actor_identifier = API key *name*
---                              (e.g. "karsten-claude-code-key"). JOIN with
+--                              (e.g. "alice-claude-code-key"). JOIN with
 --                              claude_admin_api_keys on name to resolve api_key_id.
 --                              email column NULL, api_key_id populated.
---                              Observed in real Virtuozzo data: 100% of activity
---                              is api_actor — org admins provision named per-
---                              developer keys rather than letting users auth
---                              directly. Silver Step 2 (Identity Resolution)
---                              maps api_key_id → person_id.
+--                              Orgs whose admins provision named per-developer
+--                              keys (rather than letting users auth directly)
+--                              report all activity as api_actor. Silver Step 2
+--                              (Identity Resolution) maps api_key_id → person_id.
 --
 -- Note: Claude Code usage is also present in Enterprise data
 -- (claude_enterprise_users.code_*). For orgs on the Enterprise subscription,
@@ -26,9 +25,9 @@
 -- silver:class_ai_api_usage (token-level metrics Enterprise does not publish).
 --
 -- Why prefer Enterprise here:
---   • user-grain attribution out of the box (user_email) — Admin reports
---     api_actor for 100% of activity in real-world data, requiring an extra
---     api_key_name → api_key_id → person_id resolution step.
+--   • user-grain attribution out of the box (user_email) — for orgs on
+--     per-developer API keys Admin reports everything as api_actor, requiring
+--     an extra api_key_name → api_key_id → person_id resolution step.
 --   • Enterprise also exposes adjacent surfaces (chat, cowork, office)
 --     that Admin's code_usage endpoint does not.
 --

@@ -232,7 +232,7 @@ Four columns appear in every Bronze table across the entire connector fleet. The
 
 - **`collected_at DateTime64(3)`** — timestamp of the collection run that produced the row. Populated by the base framework at write time.
 - **`data_source String`** — the connector's canonical identifier (e.g. `insight_youtrack`, `insight_hubspot`). Populated from the `connector.id` field in the manifest.
-- **`insight_source_id String`** — the specific instance being collected from (e.g. `youtrack-acme-prod`, `jira-virtuozzo-prod`). Populated from the connector's runtime configuration.
+- **`insight_source_id String`** — the specific instance being collected from (e.g. `youtrack-acme-prod`, `jira-globex-prod`). Populated from the connector's runtime configuration.
 - **`_version UInt64`** — epoch milliseconds at collection time. Used as the deduplication sort key in ClickHouse ReplacingMergeTree tables.
 
 These columns are structural infrastructure. Any connector that declares them explicitly is doing unnecessary work; the base framework should own them entirely.
@@ -464,7 +464,7 @@ No equivalent constraint exists for YouTrack, Jira, HubSpot, or Salesforce — t
 The platform supports multiple instances of the same connector type in parallel — five Jenkins instances, two Jira instances, two Zabbix instances, multiple YouTrack deployments across different customer tenants. Every Bronze row carries a `insight_source_id` string that identifies which instance produced it.
 
 The `insight_source_id` value for each instance must be:
-- **Human-readable**: `jira-virtuozzo-prod` and `jira-osystems-prod`, not `instance-1` and `instance-2`
+- **Human-readable**: `jira-acme-prod` and `jira-globex-prod`, not `instance-1` and `instance-2`
 - **Stable**: changing a `insight_source_id` after historical data has been collected breaks all historical joins — every existing row that referenced the old value becomes unresolvable
 - **Unique across all instances of the same type**: two Jira instances cannot share an ID, even if they are on different customer tenants
 - **Meaningful in context**: `youtrack-acme-prod` tells an analyst at a glance which system they are querying; a UUID does not

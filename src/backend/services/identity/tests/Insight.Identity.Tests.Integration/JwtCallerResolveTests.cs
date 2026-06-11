@@ -34,7 +34,7 @@ public sealed class JwtCallerResolveTests : IAsyncLifetime
 
     private const string OidValue   = "22c303cd-1364-4165-8fb8-7b412f0e3bb6";
     private const string SubValue   = "ZfBGhYsNQWyvDWPNRGfd-zefLAdrC0x8g_vJe2veeEI";
-    private const string EmailValue = "grigoriy.gogin@constructor.tech";
+    private const string EmailValue = "john.doe@example.com";
 
     private readonly MariaDbFixture _fixture;
 

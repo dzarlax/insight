@@ -893,8 +893,8 @@ The reconcile engine identifies resources by deterministic conventions, not by s
 | Airbyte `connection.tags` | membership + config hash | `["insight", "cfg-hash:<sha256(secret.data)>"]` | Membership marker + per-instance config drift detector |
 | K8s Secret label | membership | `app.kubernetes.io/part-of=insight` | Discovery filter |
 | K8s Secret annotations | identity | `insight.cyberfabric.com/connector=<name>`, `insight.cyberfabric.com/source-id=<id>` | Pair Secret with `connectors/<name>/descriptor.yaml` and Airbyte source name |
-| Airbyte `source.name` | composed | `{connector_name}-{source_id}-{tenant_id}` | Stable lookup pattern (e.g., `bamboohr-bamboohr-main-virtuozzo`) |
-| Airbyte `connection.name` | composed | `{connector_name}-{source_id}-to-clickhouse-{tenant_id}` | Stable lookup pattern (e.g., `bamboohr-bamboohr-main-to-clickhouse-virtuozzo`) |
+| Airbyte `source.name` | composed | `{connector_name}-{source_id}-{tenant_id}` | Stable lookup pattern (e.g., `bamboohr-bamboohr-main-acme`) |
+| Airbyte `connection.name` | composed | `{connector_name}-{source_id}-to-clickhouse-{tenant_id}` | Stable lookup pattern (e.g., `bamboohr-bamboohr-main-to-clickhouse-acme`) |
 | Airbyte `connection.namespaceFormat` | bronze database | `bronze_{connector_name_underscored}` | Per-connector ClickHouse Bronze database |
 
 > **Tenant resolution**: `tenant_id` comes from cluster-level `ConfigMap insight-config` (data field `tenant_id`) or env var `INSIGHT_TENANT_ID` as fallback. Per-tenant `connections/<tenant>.yaml` files are removed (Decision #6).

@@ -24,7 +24,7 @@
   - [4.3 Merge and Split Operations](#43-merge-and-split-operations)
   - [4.4 ClickHouse Integration Patterns](#44-clickhouse-integration-patterns)
   - [4.5 End-to-End Walkthrough: Anna Ivanova](#45-end-to-end-walkthrough-anna-ivanova)
-  - [4.6 End-to-End Walkthrough: Alexei Vavilov (Min-Propagation)](#46-end-to-end-walkthrough-alexei-vavilov-min-propagation)
+  - [4.6 End-to-End Walkthrough: Andrei Sokolov (Min-Propagation)](#46-end-to-end-walkthrough-andrei-sokolov-min-propagation)
   - [4.7 Deployment](#47-deployment)
   - [4.8 Operational Considerations](#48-operational-considerations)
 - [5. Implementation Recommendations](#5-implementation-recommendations)
@@ -1173,10 +1173,10 @@ The MatchingEngine (`cpt-insightspec-ir-component-matching-engine`) evaluates ru
 
 **Email normalization pipeline**:
 ```
-Input: "John.Doe+test@Constructor.TECH"
-  1. lowercase        → "john.doe+test@constructor.tech"
-  2. trim whitespace  → "john.doe+test@constructor.tech"
-  3. remove plus tags → "john.doe@constructor.tech"
+Input: "John.Doe+test@Acme.COM"
+  1. lowercase        → "john.doe+test@acme.com"
+  2. trim whitespace  → "john.doe+test@acme.com"
+  3. remove plus tags → "john.doe@acme.com"
   4. domain alias     → also matches "john.doe@constructor.dev"
 ```
 
@@ -1314,29 +1314,29 @@ Both BambooHR and AD claim `email` alias for `p-1001` but with different values 
 
 ---
 
-### 4.6 End-to-End Walkthrough: Alexei Vavilov (Min-Propagation)
+### 4.6 End-to-End Walkthrough: Andrei Sokolov (Min-Propagation)
 
 > Source: `inbox/IDENTITY_RESOLUTION.md`
 
 This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verification mechanism.
 
-**Sources**: BambooHR (`source_account_id: b1`, `display_name: alexei vavilov`, `email: Alexei.Vavilov@alemira.com`), Git commits (`source_account_id: c1–c3`, `username: he4et`, various personal emails), YouTrack (`source_account_id: y1`, `display_name: Alexey Vavilov`, `email: a.vavilov@constructor.tech`).
+**Sources**: BambooHR (`source_account_id: b1`, `display_name: andrei sokolov`, `email: Andrei.Sokolov@acme.io`), Git commits (`source_account_id: c1–c3`, `username: sokol`, various personal emails), YouTrack (`source_account_id: y1`, `display_name: Andrey Sokolov`, `email: a.sokolov@acme.com`).
 
 **Token extraction from `identity_inputs`**:
 
 | `insight_source_type` | `source_account_id` | `value_type` | `value` (token) |
 |---|---|---|---|
-| `bamboohr` | `b1` | `display_name` | `alexei vavilov` |
-| `bamboohr` | `b1` | `email` | `alexei.vavilov@alemira.com` |
-| `git` | `c1` | `username` | `he4et` |
-| `git` | `c2` | `email` | `he4et@gmail.com` |
-| `git` | `c3` | `email` | `a.vavilov@gmail.com` |
-| `youtrack` | `y1` | `display_name` | `alexey vavilov` |
-| `youtrack` | `y1` | `email` | `a.vavilov@constructor.tech` |
+| `bamboohr` | `b1` | `display_name` | `andrei sokolov` |
+| `bamboohr` | `b1` | `email` | `andrei.sokolov@acme.io` |
+| `git` | `c1` | `username` | `sokol` |
+| `git` | `c2` | `email` | `sokol@gmail.com` |
+| `git` | `c3` | `email` | `a.sokolov@gmail.com` |
+| `youtrack` | `y1` | `display_name` | `andrey sokolov` |
+| `youtrack` | `y1` | `email` | `a.sokolov@acme.com` |
 
 **After name alias enrichment** (`alexei` <-> `alexey`): BambooHR and YouTrack get synthetic tokens for each other's name spelling.
 
-**After domain alias enrichment** (`gmail.com`, `alemira.com`, `constructor.tech` grouped): Git c3 and YouTrack share `a.vavilov@gmail.com`.
+**After domain alias enrichment** (`gmail.com`, `acme.io`, `acme.com` grouped): Git c3 and YouTrack share `a.sokolov@gmail.com`.
 
 **Min-propagation result**: `rid(b1)`, `rid(c1)`, `rid(c2)`, `rid(c3)`, `rid(y1)` → all converge to same minimum group ID → `profile_group_id = 1`.
 

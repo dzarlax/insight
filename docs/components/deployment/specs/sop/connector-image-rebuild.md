@@ -117,9 +117,9 @@ No build identity lives in the workflow YAML. Renaming a GHCR image, moving a Do
 - Check insight-gitops GitLab CI: most recent `chart-poller` run should have committed an update to `.insight-version`. If it didn't, look at the job log for skopeo/auth errors.
 - Manual recovery: in insight-gitops, run the `chart-poller` job from the Pipelines UI ("Run pipeline" → manual trigger).
 
-### "Virtuozzo / customer install needs the new image"
-- Open `environments/virtuozzo/values.yaml` in insight-gitops. Bump `ingestion.toolboxImage` to the new tag AND `.insight-version` to the new umbrella semver. One MR; deploy manually via `make deploy ENV=virtuozzo` from a workstation (per inventory.protected).
-- Connector image refs (`images.cdk.image` / `images.enrich.image`) travel INSIDE the toolbox image — no need to pin them per-connector at the virtuozzo overlay.
+### "Customer install needs the new image"
+- Open `environments/<env>/values.yaml` in insight-gitops. Bump `ingestion.toolboxImage` to the new tag AND `.insight-version` to the new umbrella semver. One MR; deploy manually via `make deploy ENV=<env>` from a workstation (per inventory.protected).
+- Connector image refs (`images.cdk.image` / `images.enrich.image`) travel INSIDE the toolbox image — no need to pin them per-connector at the customer overlay.
 
 ## References
 

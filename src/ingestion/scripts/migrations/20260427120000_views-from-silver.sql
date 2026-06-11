@@ -198,7 +198,7 @@ GROUP BY person_id, metric_date;
 -- ---------------------------------------------------------------------
 -- The previous definition referenced a non-existent column `issue_type`
 -- (renamed/removed during a bronze schema migration), so the view was
--- broken on virtuozzo. silver.class_task_field_history would be the
+-- broken at query time. silver.class_task_field_history would be the
 -- right source long-term, but it stores per-field events (not per-issue
 -- snapshots), so reproducing the gold contract needs a new
 -- silver.class_task_daily — out of scope for this PR.

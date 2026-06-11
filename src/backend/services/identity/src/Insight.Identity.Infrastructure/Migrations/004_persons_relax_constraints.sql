@@ -21,8 +21,8 @@
 -- B) Switch value_id collation from utf8mb4_bin (case-sensitive) to
 --    utf8mb4_unicode_ci (case-insensitive), matching value_full_text.
 --    The original utf8mb4_bin choice made every value_id comparison
---    case-sensitive: a lookup for `roman.mitasov@...` would not match
---    a stored `Roman.Mitasov@...` even though both refer to the same
+--    case-sensitive: a lookup for `jane.doe@...` would not match
+--    a stored `Jane.Doe@...` even though both refer to the same
 --    person. The service-side ToLowerInvariant() partially mitigated
 --    this for the GET /v1/persons/{email} happy path but did nothing
 --    for raw callers, for any other value_type (id / username /

@@ -736,7 +736,7 @@ KUBECONFIG: `~/.kube/insight.kubeconfig`
 
 | Script | Purpose |
 |--------|---------|
-| `./dev-up.sh` | Dev wrapper: builds Docker images from `src/`, creates a local Kind cluster (or targets a dev-owned remote like virtuozzo), loads images into the cluster, and delegates to `deploy/scripts/install*.sh` to install Airbyte, Argo Workflows, and the Insight umbrella chart. Uses `.env.<env>` for configuration. Idempotent. |
+| `./dev-up.sh` | Dev wrapper: builds Docker images from `src/`, creates a local Kind cluster (or targets a dev-owned remote cluster), loads images into the cluster, and delegates to `deploy/scripts/install*.sh` to install Airbyte, Argo Workflows, and the Insight umbrella chart. Uses `.env.<env>` for configuration. Idempotent. |
 | `./dev-down.sh` | Graceful stop: scales all `insight`-namespace deployments to 0, stops the Kind container. Data preserved — `./dev-restart.sh` brings everything back. |
 | `./dev-restart.sh` | Quick restart after WSL/Docker crash or `./dev-down.sh`: restarts the Kind container, scales `insight`-namespace pods back to 1, re-patches CoreDNS, restores port-forwards. Falls back to `./dev-up.sh` if the cluster is gone. Lightweight — no image builds, no helm upgrade. |
 | `deploy/scripts/install.sh` | Production-style installer (canonical path): chains `install-airbyte.sh` → `install-argo.sh` → `install-insight.sh` against the current kubeconfig. Used by `dev-up.sh` and end-user installs from published chart artifacts. |

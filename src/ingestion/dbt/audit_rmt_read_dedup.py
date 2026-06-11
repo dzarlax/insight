@@ -8,8 +8,8 @@ WHY
   ReplacingMergeTree(_version)), and bronze tables are promoted to RMT too.
   RMT only collapses duplicates during background merges — never guaranteed at
   query time. If an upstream table holds transient pre-merge duplicates (e.g.
-  an erroneous Airbyte full_refresh|append re-appending every row, as happened
-  across all virtuozzo connectors), a plain SELECT leaks them downstream and
+  an erroneous Airbyte full_refresh|append re-appending every row on each
+  sync), a plain SELECT leaks them downstream and
   inflates metrics. Per ADR-0001 every read of an RMT relation MUST dedup at
   read time: FINAL / argMax / QUALIFY ROW_NUMBER / LIMIT 1 BY.
 

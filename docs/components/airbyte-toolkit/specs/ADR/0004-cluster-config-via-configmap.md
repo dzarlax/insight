@@ -63,7 +63,7 @@ Chosen option: **Option C — `ConfigMap insight-config` with env override**.
 
 ### Confirmation
 
-- `kubectl -n "${INSIGHT_NAMESPACE}" get configmap insight-config -o jsonpath='{.data.tenant_id}'` returns the cluster's tenant ID; reconcile uses the value without falling back. `INSIGHT_NAMESPACE` matches the Helm release namespace (e.g. `data` on virtuozzo, `insight` on dev) and is supplied to the runtime by the chart via the pod env; no namespace literal is hard-coded by reconcile.
+- `kubectl -n "${INSIGHT_NAMESPACE}" get configmap insight-config -o jsonpath='{.data.tenant_id}'` returns the cluster's tenant ID; reconcile uses the value without falling back. `INSIGHT_NAMESPACE` matches the Helm release namespace (e.g. `insight` on dev; customer clusters may differ) and is supplied to the runtime by the chart via the pod env; no namespace literal is hard-coded by reconcile.
 - Setting `INSIGHT_TENANT_ID=test-tenant` and invoking `reconcile-connectors.sh --dry-run` resolves the env value, ignoring any ConfigMap content (precedence test).
 - Removing the ConfigMap and unsetting the env var causes `reconcile-connectors.sh` to abort with a clear message ("`tenant_id` not configured: set `INSIGHT_TENANT_ID` or create `ConfigMap insight-config`").
 
@@ -71,7 +71,7 @@ Chosen option: **Option C — `ConfigMap insight-config` with env override**.
 
 ### Option A — `connections/<tenant>.yaml` in repo
 
-A YAML file per cluster (e.g., `connections/virtuozzo.yaml`) with `tenant_id: virtuozzo`. The toolkit reads from a default-named file or via `--tenant <name>`.
+A YAML file per cluster (e.g., `connections/acme.yaml`) with `tenant_id: acme`. The toolkit reads from a default-named file or via `--tenant <name>`.
 
 - Good, because `tenant_id` is version-controlled and reviewable.
 - Neutral, because the file's content (only `tenant_id`) is sparse — historically also held destination overrides that are now redundant.
@@ -112,7 +112,7 @@ Cluster-level ConfigMap in the Insight Helm release namespace (resolved at runti
     name: insight-config
     namespace: <insight-namespace>
   data:
-    tenant_id: virtuozzo
+    tenant_id: acme
   ```
 - Resolution precedence (toolkit): `INSIGHT_TENANT_ID` env var (if set and non-empty) → `ConfigMap insight-config.data.tenant_id` (looked up in `${INSIGHT_NAMESPACE}`) → abort.
 - Related decisions:

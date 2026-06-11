@@ -2,7 +2,7 @@
 
 **Purpose**: full narrative of the first-run debugging of `./dev-up.sh` on a clean Kind cluster, after the umbrella / canonical-installer refactor (PR #224).
 
-**Worktree**: `/Users/roman/alemira/insight/.claude/worktrees/laughing-feistel-fe1e16`
+**Worktree**: `.claude/worktrees/laughing-feistel-fe1e16`
 **Branch**: `claude/laughing-feistel-fe1e16`
 **Start**: 2026-04-23
 

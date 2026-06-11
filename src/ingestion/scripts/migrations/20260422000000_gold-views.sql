@@ -148,7 +148,7 @@ AS SELECT
     toDate(parseDateTimeBestEffortOrNull(assumeNotNull(date))) AS metric_date,
     count() AS commits
 FROM bronze_bitbucket_cloud.commits
-WHERE (author_email IS NOT NULL) AND (author_email LIKE '%@virtuozzo.com') AND (date IS NOT NULL)
+WHERE (author_email IS NOT NULL) AND (date IS NOT NULL)
 GROUP BY
     person_id,
     metric_date

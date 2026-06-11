@@ -299,7 +299,7 @@ INSERT INTO match_rule (name, description, rule_type, weight, phase, condition_t
   ('hr_id_match',       'HR system employee ID match',                     'exact',         1.00, 'B1', 'hr_id_exact',       '{}', 2),
   ('username_same_sys', 'Same username in same system type',               'exact',         0.95, 'B1', 'username_exact',    '{}', 3),
   ('email_case_norm',   'Email match ignoring case',                       'normalization', 0.95, 'B2', 'email_normalize',   '{"transform": "lowercase"}', 10),
-  ('email_domain_alias','Same local part, known domain alias',             'normalization', 0.92, 'B2', 'email_domain',      '{"aliases": {"constructor.tech": ["constructor.dev"]}}', 11),
+  ('email_domain_alias','Same local part, known domain alias',             'normalization', 0.92, 'B2', 'email_domain',      '{"aliases": {"acme.com": ["acme.dev"]}}', 11),
   ('email_plus_tag',    'Email match ignoring +tag',                       'normalization', 0.93, 'B2', 'email_normalize',   '{"transform": "remove_plus_tags"}', 12),
   ('username_cross_sys','Same username in related systems (Git<->Jira)',   'cross_system',  0.85, 'B2', 'username_cross',    '{"system_pairs": [["gitlab","github"],["gitlab","jira"]]}', 20),
   ('email_to_username', 'Email local part matches username in other sys',  'cross_system',  0.72, 'B2', 'email_username',    '{}', 21),
@@ -540,7 +540,7 @@ FOR each record in raw_people WHERE _synced_at > last_bootstrap_run:
 
 - **Bootstrap resolves the "unmapped purgatory."** When a new employee appears in HR, the bootstrap creates their email aliases. Any previously unmapped aliases from Git or Jira that match those emails are auto-resolved.
 
-- **Multiple HR sources.** If two HR connectors write to `raw_people` (e.g., BambooHR for Constructor, Workday for Acronis), the bootstrap processes both. Different `source_system` values prevent collisions.
+- **Multiple HR sources.** If two HR connectors write to `raw_people` (e.g., BambooHR for one company, Workday for another), the bootstrap processes both. Different `source_system` values prevent collisions.
 
 ---
 
@@ -664,11 +664,11 @@ Email normalization and cross-system username correlation.
 **Email normalization pipeline:**
 
 ```
-Input: "John.Doe+test@Constructor.TECH"
-  1. lowercase           -> "john.doe+test@constructor.tech"
-  2. trim whitespace     -> "john.doe+test@constructor.tech"
-  3. remove plus tags    -> "john.doe@constructor.tech"
-  4. apply domain alias  -> "john.doe@constructor.dev" (also matches)
+Input: "John.Doe+test@Acme.COM"
+  1. lowercase           -> "john.doe+test@acme.com"
+  2. trim whitespace     -> "john.doe+test@acme.com"
+  3. remove plus tags    -> "john.doe@acme.com"
+  4. apply domain alias  -> "john.doe@acme.dev" (also matches)
 ```
 
 **Domain alias configuration** (stored in `match_rule.config` JSON):
@@ -676,8 +676,8 @@ Input: "John.Doe+test@Constructor.TECH"
 ```json
 {
   "aliases": {
-    "constructor.tech": ["constructor.dev", "constructor.io"],
-    "acronis.com": ["acronis.work"]
+    "acme.com": ["acme.dev", "acme.io"],
+    "globex.com": ["globex.work"]
   }
 }
 ```

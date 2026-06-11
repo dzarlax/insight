@@ -2,7 +2,7 @@
 # Insight platform — DEV bring-up from source.
 #
 # Use this when you work on the codebase: builds Docker images from src/,
-# creates a local Kind cluster (or targets a dev-owned remote like virtuozzo),
+# creates a local Kind cluster (or targets a dev-owned remote cluster),
 # loads images into the cluster, and deploys all services.
 #
 # NOT for end-user installations. For customers / production-like installs
@@ -21,8 +21,8 @@
 #
 # Usage:
 #   ./dev-up.sh                         # --env local, all components
-#   ./dev-up.sh --env virtuozzo         # remote cluster, all components
-#   ./dev-up.sh --env virtuozzo app     # backend + frontend only
+#   ./dev-up.sh --env remote            # remote cluster, all components
+#   ./dev-up.sh --env remote app        # backend + frontend only
 #   ./dev-up.sh ingestion               # only ingestion (default env=local)
 #
 # Valid components: all | ingestion | app | backend | frontend
@@ -565,7 +565,7 @@ if [[ "$CLUSTER_MODE" == "local" || "${SHOW_CREDS:-}" == "1" ]]; then
   [[ -n "$MDB_ROOT" ]]   && echo "  MariaDB  root                / $MDB_ROOT"
   [[ -n "$REDIS_PASS" ]] && echo "  Redis    default             / $REDIS_PASS"
 else
-  # For remote envs (virtuozzo, prod-like) — DO NOT dump passwords into
+  # For remote (prod-like) envs — DO NOT dump passwords into
   # the developer's terminal scrollback. Print only how to fetch them.
   echo "  (remote cluster — passwords not printed; pass SHOW_CREDS=1 to override)"
   echo "  Fetch with:"

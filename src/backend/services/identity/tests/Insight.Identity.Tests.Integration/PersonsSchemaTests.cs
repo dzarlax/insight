@@ -16,7 +16,7 @@ namespace Insight.Identity.Tests.Integration;
 /// * `value_id` collation is `utf8mb4_unicode_ci` so all value-column
 ///   comparisons (email, source-native ids, parent_email, etc.) are
 ///   case-insensitive at the storage layer — a lookup for
-///   `roman.mitasov@...` finds a stored `Roman.Mitasov@...`.
+///   `jane.doe@...` finds a stored `Jane.Doe@...`.
 ///
 /// If a future migration accidentally reintroduces the value_hash
 /// UNIQUE or reverts the collation, the tests below fail loudly.
@@ -88,11 +88,11 @@ public sealed class PersonsSchemaTests : IAsyncLifetime
         // Store the email with mixed case (as BambooHR may emit it),
         // then look it up lowercase. With utf8mb4_unicode_ci, the
         // comparison treats them as equal.
-        await InsertEmailAsync("Roman.Mitasov@constructor.tech").ConfigureAwait(false);
+        await InsertEmailAsync("Jane.Doe@example.com").ConfigureAwait(false);
 
-        var personIdLowercase = await ResolveByEmailAsync("roman.mitasov@constructor.tech").ConfigureAwait(false);
-        var personIdMixedCase = await ResolveByEmailAsync("ROMAN.MITASOV@CONSTRUCTOR.TECH").ConfigureAwait(false);
-        var personIdOriginal  = await ResolveByEmailAsync("Roman.Mitasov@constructor.tech").ConfigureAwait(false);
+        var personIdLowercase = await ResolveByEmailAsync("jane.doe@example.com").ConfigureAwait(false);
+        var personIdMixedCase = await ResolveByEmailAsync("JANE.DOE@EXAMPLE.COM").ConfigureAwait(false);
+        var personIdOriginal  = await ResolveByEmailAsync("Jane.Doe@example.com").ConfigureAwait(false);
 
         personIdLowercase.Should().Be(PersonId);
         personIdMixedCase.Should().Be(PersonId);

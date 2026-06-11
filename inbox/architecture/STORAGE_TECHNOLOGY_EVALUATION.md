@@ -57,27 +57,27 @@ Data volume estimates based on integrated data sources from [Product Specificati
 | **Total (current sources)** | **52-119** | **13,000 - 29,750** |
 | **Total (with planned sources)** | **57-129** | **14,250 - 32,250** |
 
-**Conservative estimate:** 17,000 events/employee/year (based on Phase 1 Constructor deployment)  
+**Conservative estimate:** 17,000 events/employee/year (based on the Phase 1 deployment)  
 **Aggressive estimate:** 30,000 events/employee/year (power users with all integrations)
 
 ---
 
-**Year 1 (Constructor only):**
+**Year 1 (first company only):**
 - **Employees:** 300
 - **Sources:** Git, MCP, YouTrack, Zulip, M365, BambooHR, Office Attendance (7 sources)
 - **Events/employee/year:** ~17,000 (based on actual source table)
 - **Annual volume:** 300 × 17,000 = **5.1M rows/year**
 - **Cumulative Year 1:** **5.1M rows**
 
-**Year 2 (Add Virtuozzo):**
-- **Employees:** 300 (Constructor) + 200 (Virtuozzo) = 500
-- **Sources:** Jira replaces YouTrack for Virtuozzo
+**Year 2 (add second company):**
+- **Employees:** 300 (first company) + 200 (second company) = 500
+- **Sources:** Jira replaces YouTrack for the second company
 - **Events/employee/year:** ~17,000 (same source mix)
 - **Annual volume:** 500 × 17,000 = **8.5M rows/year**
 - **Cumulative Year 2:** 5.1M + 8.5M = **13.6M rows**
 
-**Year 3 (Add Acronis):**
-- **Employees:** 500 + 500 (Acronis) = 1,000
+**Year 3 (add third company):**
+- **Employees:** 500 + 500 (third company) = 1,000
 - **Sources:** Add Bitbucket, Confluence, Workday
 - **Events/employee/year:** ~19,000 (additional Bitbucket + Confluence)
 - **Annual volume:** 1,000 × 19,000 = **19M rows/year**
@@ -96,7 +96,7 @@ Data volume estimates based on integrated data sources from [Product Specificati
 
 | Timeframe | Cumulative Rows | Primary Use Case |
 |-----------|----------------|------------------|
-| **Year 1** | 5.1M | Single company (Constructor) |
+| **Year 1** | 5.1M | Single company |
 | **Year 3** | 32.6M | Portfolio (3 companies) |
 | **Year 5** | 120M | Portfolio + Education segment |
 
@@ -435,7 +435,7 @@ Data volume estimates based on integrated data sources from [Product Specificati
 - Strong ecosystem and community support
 - Standard SQL reduces vendor lock-in risk
 - Better than MariaDB ColumnStore for JSON workloads
-- Viable **only for Phase 1-2** (Constructor + Virtuozzo, <15M rows)
+- Viable **only for Phase 1-2** (first two companies, <15M rows)
 - **Not viable for Phase 3+** without enterprise license or migration
 
 ---

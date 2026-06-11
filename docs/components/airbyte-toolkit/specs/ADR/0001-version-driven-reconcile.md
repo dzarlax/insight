@@ -37,7 +37,7 @@ How do we represent the *intended* connector version durably and unambiguously, 
 - **No recreate on version bump**: when the operator bumps the version, sources and connections must NOT be deleted and recreated by default — sync state (Airbyte cursors per stream) is precious.
 - **Human-editable**: the version anchor must live in version-controlled source code so PR review and `git blame` apply.
 - **Low operational overhead**: no extra storage system to provision, monitor, back up, or recover.
-- **Drift-resistant**: the anchor must not depend on a parallel local state that can desynchronize from cluster reality (this is the failure mode of `state.yaml` and `airbyte-state` ConfigMap on the virtuozzo cluster as of 2026-05-04).
+- **Drift-resistant**: the anchor must not depend on a parallel local state that can desynchronize from cluster reality (the observed failure mode of `state.yaml` and the `airbyte-state` ConfigMap in production).
 
 ## Considered Options
 
@@ -76,7 +76,7 @@ A YAML file checked into the repo, containing `applied_version` per connector al
 - Good, because zero new infrastructure.
 - Neutral, because requires a strict contract between writer (CI/CD) and reader (operators).
 - Bad, because the writer must commit and push for the file to reflect reality; manual recovery edits or out-of-band Airbyte changes leave the file inconsistent.
-- Bad, because in observed production (virtuozzo cluster) the file already drifted heavily from Airbyte — UUIDs in the file no longer existed in the cluster.
+- Bad, because in observed production the file already drifted heavily from Airbyte — UUIDs in the file no longer existed in the cluster.
 
 ### Option B — Cluster-side `ConfigMap airbyte-state`
 
@@ -115,7 +115,6 @@ A strict semver `MAJOR.MINOR.PATCH` string in `descriptor.yaml`; on publish, the
   - `cpt-insightspec-adr-cdk-prebuilt-images` (ADR-0011) — CDK image identity carried verbatim in `descriptor.cdk_image`; reconcile splits and applies; never builds at runtime.
   - `cpt-insightspec-adr-enrich-image-in-descriptor` (ADR-0014) — same single-source-of-truth principle extended to enrich sidecar images (jira-enrich, future youtrack-enrich).
   - `cpt-insightspec-adr-semver-and-full-refresh` (ADR-0015) — strict semver `MAJOR.MINOR.PATCH` format; any bump triggers catalog re-discover so new streams/fields are auto-enabled; major bump additionally dispatches a one-shot `dbt --full-refresh` for that connector's `dbt_select` scope. No cross-connector cascade.
-- Background — original investigation against virtuozzo cluster (2026-05-04): `state.yaml` `definitions.{connector}.id` did not match any source's `sourceDefinitionId` for 8 of 9 connectors; clear evidence the parallel-store approach had failed.
 
 ## Traceability
 

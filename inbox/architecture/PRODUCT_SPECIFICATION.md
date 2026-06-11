@@ -36,7 +36,7 @@ Insight's architecture is designed for **50M+ rows over 3 years** based on the f
 - **Total with planned:** ~19,000 events/employee/year
 
 **Deployment Phases:**
-- **Year 1:** 300 employees (Constructor) → 5.1M rows
+- **Year 1:** 300 employees (first company) → 5.1M rows
 - **Year 3:** 1,000 employees (portfolio) → 33M cumulative rows
 - **Year 5:** 1,000 employees + 5,000 students → 120M cumulative rows
 
@@ -72,7 +72,7 @@ Insight's architecture is designed for **50M+ rows over 3 years** based on the f
 | Marketing Leaders | Campaign activity, lead generation, and funnel contribution |
 | Operations Leaders | Cross-functional workflow efficiency and throughput |
 
-> **Principle: Measure all employees, not just engineers.** Engineering headcount is typically a minority of the total workforce — for example, at Acronis, engineers are ~26% of headcount and ~15% of costs. Limiting measurement to engineering roles means the majority of the organization remains a blind spot. Insight is designed to measure productivity signals across all employee functions using domain-appropriate metrics for each role.
+> **Principle: Measure all employees, not just engineers.** Engineering headcount is typically a minority of the total workforce — often a quarter or less of headcount and a smaller share of costs. Limiting measurement to engineering roles means the majority of the organization remains a blind spot. Insight is designed to measure productivity signals across all employee functions using domain-appropriate metrics for each role.
 
 ### Education Segment
 
@@ -609,9 +609,9 @@ Alerts highlight anomalies and correlations, prompting investigation rather than
 
 Insight is domain-agnostic by design. Any dataset can be integrated with a connector and semantic description.
 
-### Currently Integrated Sources (Phase 1: Constructor)
+### Currently Integrated Sources (Phase 1)
 
-Active integrations for the initial deployment at Constructor (~300 employees):
+Active integrations for the initial deployment (~300 employees):
 
 | Category | Source | Status | Est. Events/Employee/Year |
 |----------|--------|--------|---------------------------|
@@ -630,10 +630,10 @@ Active integrations for the initial deployment at Constructor (~300 employees):
 
 | Source | Target Use Case | Target Company | Est. Additional Events/Year |
 |--------|-----------------|----------------|----------------------------|
-| Bitbucket | PR analytics, reviewer metrics | Acronis | +500 |
+| Bitbucket | PR analytics, reviewer metrics | Portfolio company | +500 |
 | Confluence | Wiki pages, comments, knowledge base | All portfolio companies | +1,000 |
-| Jira | Project management (alternative to YouTrack) | Virtuozzo | ~5,000 (replaces YouTrack) |
-| Workday | Enterprise HR system | Acronis | ~50 (replaces BambooHR) |
+| Jira | Project management (alternative to YouTrack) | Portfolio company | ~5,000 (replaces YouTrack) |
+| Workday | Enterprise HR system | Portfolio company | ~50 (replaces BambooHR) |
 
 **Mid-term (Phase 3 - Education Segment):**
 
@@ -849,21 +849,21 @@ An analyst receives a request for a new metric:
 
 ## Implementation Phases
 
-### Phase 1: Metrics-First Validation (Constructor)
+### Phase 1: Metrics-First Validation (internal)
 
 Focus on proving semantic governance on internal data:
 
 - **Sources**: Git, YouTrack, Zulip, M365, Office Attendance + HR (BambooHR)
 - **Goal**: Prove AI-agent correctly generates SQL from semantic descriptions
 - **Visualization**: Custom React dashboards
-- **Outcome**: Working prototype on Constructor's ~300 employees
+- **Outcome**: Working prototype on the vendor's own ~300 employees
 
-### Phase 2: Portfolio Expansion (Virtuozzo, Acronis)
+### Phase 2: Portfolio Expansion
 
 Normalize additional companies into the same semantic model:
 
-- **Virtuozzo**: Jira for project management
-- **Acronis**: Jira, Workday, Bitbucket for global productivity
+- **Second company**: Jira for project management
+- **Third company**: Jira, Workday, Bitbucket for global productivity
 - **Goal**: Cross-company benchmarking with unified definitions
 
 ### Phase 3: Education Scale (Universities, LPE)

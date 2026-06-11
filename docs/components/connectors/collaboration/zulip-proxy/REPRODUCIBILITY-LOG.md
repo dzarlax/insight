@@ -18,7 +18,7 @@ Conventions:
 ## 0. Inputs and ground truth
 
 - **Reference manifest** (Airbyte declarative source v0.57.0, incompatible with current repo):
-  `/Users/roman/alemira/insight/zulip_proxy.yaml` — Bearer auth against a proxy that aggregates
+  `zulip_proxy.yaml` (local workspace copy, not in repo) — Bearer auth against a proxy that aggregates
   Zulip data. Streams `users` (offset-paginated) and `messages` (cursor-paginated, incremental on
   `created_at`).
 - **Same-data sibling spec** (existing Zulip Basic-Auth connector docs in the repo):

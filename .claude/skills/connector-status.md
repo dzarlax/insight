@@ -10,7 +10,7 @@ Collect the current state of all connectors across Argo, Airbyte, and ClickHouse
 
 ## Prerequisites
 
-- `KUBECONFIG` set to target cluster (e.g. `access/virtuozzo/cyber-insight-k8s.kubeconfig`)
+- `KUBECONFIG` set to target cluster
 - Airbyte API accessible via port-forward on `localhost:8001` (or already forwarded)
 - `kubectl` access to namespaces: `argo`, `airbyte`, `data`
 

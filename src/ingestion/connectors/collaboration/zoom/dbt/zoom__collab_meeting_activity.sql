@@ -83,7 +83,7 @@ SELECT
     )) AS unique_key,
     p.email AS user_id,
     -- Pick one display name when the same email surfaces under multiple
-    -- spellings (e.g., "Karolis Dambrava" vs "karolisdambrava"). Without
+    -- spellings (e.g., "Jane Doe" vs "janedoe"). Without
     -- this, GROUP BY would split them and produce two rows with identical
     -- unique_key — the staging model's `unique_key` is keyed on
     -- (tenant, source, lower(email), date), so user_name is non-keying.

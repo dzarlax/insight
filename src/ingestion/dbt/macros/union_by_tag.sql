@@ -5,12 +5,12 @@
   Builds a UNION ALL of every model tagged `tag_name` and deduplicates the
   result at read time to exactly one row per `unique_key`.
 
-  Why the read-time dedup (added 2026-06):
+  Why the read-time dedup:
     Every staging/silver table is ReplacingMergeTree, which only collapses
     duplicates during background merges — never guaranteed at query time. If
     an upstream table holds transient pre-merge duplicates (e.g. an erroneous
-    Airbyte `full_refresh|append` re-appending every row, as happened across
-    all virtuozzo connectors), a plain `SELECT * FROM staging` leaks those
+    Airbyte `full_refresh|append` re-appending every row on each sync), a
+    plain `SELECT * FROM staging` leaks those
     duplicates straight into silver and inflates metrics. Deduping here makes
     silver duplicate-free regardless of merge timing. See ADR-0001.
 

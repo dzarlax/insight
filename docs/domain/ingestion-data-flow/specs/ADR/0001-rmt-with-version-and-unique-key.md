@@ -76,8 +76,8 @@ For all other models (event/append semantics): use `RMT(_version)` + `incrementa
 ## Update (2026-06-03): silver moved to `delete+insert`
 
 **Trigger.** A misconfigured Airbyte sync ran `full_refresh | append` (instead of
-`incremental`) across all virtuozzo connectors for a period, re-appending every
-source row. Bronze accumulated many duplicates per key. RMT only collapses on
+`incremental`) across all connectors of a deployment for a period, re-appending
+every source row. Bronze accumulated many duplicates per key. RMT only collapses on
 background merge, so the duplicates were still live at query time and propagated
 through staging into silver. Because the read-time-`FINAL` discipline of option A
 is unenforced, a consumer that forgot `FINAL` — the gold view

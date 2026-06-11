@@ -81,7 +81,7 @@ contribution.
 - **Skill workflows**: `cypilot/.core/skills/connector/workflows/create.md`,
   `cypilot/.core/skills/connector/workflows/test.md`,
   `cypilot/.core/skills/connector/workflows/validate.md`
-- **Reference manifest** (incompatible 0.57.0): `/Users/roman/alemira/insight/zulip_proxy.yaml`
+- **Reference manifest** (incompatible 0.57.0): `zulip_proxy.yaml` (local workspace copy, not in repo)
 - **Closest existing connector for dbt patterns**: `src/ingestion/connectors/collaboration/zoom/`
 - **Dependencies**: `promote_bronze_to_rmt`, `identity_inputs_from_history`, `snapshot`,
   `fields_history` macros (already exist in `src/ingestion/dbt/macros/`).
