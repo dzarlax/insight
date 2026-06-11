@@ -7,7 +7,9 @@ Subcommands:
                sample rows (ClickHouse). Phase 2 — placeholder for now.
     all        Run every step.
 
-See /Users/antonz/Sources/cf/SEED_DATA_FORMAT.md for the data contract.
+See compose/seed/README.md for the ruff/mypy/venv setup and the
+per-domain generators under compose/seed/generators/ for the data
+shape each one emits.
 """
 
 from __future__ import annotations

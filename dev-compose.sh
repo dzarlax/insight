@@ -348,8 +348,7 @@ Populate the demo dataset. Stack must be up first.
              ~24k rows of 60-day per-team activity in ClickHouse.
   all        Both (default if no arg).
 
-See /Users/antonz/Sources/cf/SEED_DATA_FORMAT.md for the data contract
-and compose/seed/README.md for ruff/mypy/venv setup.
+See compose/seed/README.md for the ruff/mypy/venv setup.
 EOF
 }
 

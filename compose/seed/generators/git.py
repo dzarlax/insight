@@ -28,7 +28,9 @@ if TYPE_CHECKING:
     import clickhouse_connect.driver.client
 
 
-# Caps from SEED_DATA_FORMAT §5.
+# Hard per-person-per-day caps. Generation respects these by
+# construction — they aren't validation rules, just upper bounds on
+# the Poisson draws so the dataset stays plausible.
 COMMITS_CAP = 20
 PRS_CAP = 6
 
@@ -65,7 +67,7 @@ def seed_class_git_commits(
             for i in range(n_commits):
                 sha = deterministic_uuid("git.commit", p.uuid, d.isoformat(), str(i))[:40]
                 is_merge = 1 if rng.random() < 0.05 else 0
-                # LOC per commit ≤ 200 by construction (SEED_DATA_FORMAT §5).
+                # LOC per commit capped at ≤200 by construction.
                 added = float(rng.randint(2, 180))
                 removed = float(rng.randint(0, 80))
                 rows.append((

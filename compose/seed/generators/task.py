@@ -10,9 +10,10 @@ event_kind='synthetic_initial'; closed issues add a follow-up
 'changelog' row flipping status to 'Closed'.
 
 Everyone except sales (light) tracks tasks. Support team gets extra
-volume + the `data_source='zendesk-placeholder'` marker called out
-in SEED_DATA_FORMAT §3, since there's no real Zendesk connector in
-the repo yet.
+volume + a `data_source='zendesk-placeholder'` marker, since there's
+no real Zendesk connector in the repo yet — the marker exists so the
+distinction is visible in the silver data even though no production
+Zendesk feed exists.
 """
 
 from __future__ import annotations

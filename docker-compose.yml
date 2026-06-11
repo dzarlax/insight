@@ -392,7 +392,6 @@ services:
 
   # ── Sample-data seeder (profile=seed) ──────────────────────────────────
   #
-  # See compose/seed/README.md and /Users/antonz/Sources/cf/SEED_DATA_FORMAT.md.
   # Invoked via ./dev-compose-seed-sample.sh which passes positional args
   # (identity | silver | all) through to seed.py.
   seed-sample:

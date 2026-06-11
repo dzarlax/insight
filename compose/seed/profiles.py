@@ -1,9 +1,16 @@
 """
 Demo persons + team profiles.
 
-The 25-person organisation that the seed script populates. See
-/Users/antonz/Sources/cf/SEED_DATA_FORMAT.md (sections 2 and 3) for the
-underlying design.
+The 25-person organisation that the seed script populates: one CEO
+above 4 team leads (development, sales, HR, support), each with 5 ICs.
+The development-team lead's email is `VITE_DEV_USER_EMAIL` (the
+dev-impersonation user); the other 24 persons get deterministic
+`email_<team>_<NN>@company.nonpresent` addresses.
+
+`TEAM_PROFILES` below maps a per-team source-type to a numeric
+multiplier (0 = no rows; 1 = baseline; >1 = heavier). The row
+generators consult these weights to decide which silver rows a given
+person produces and at what volume.
 """
 
 from __future__ import annotations
@@ -63,8 +70,8 @@ class Person:
 class TeamProfile:
     name: str
     # Per-source-type activity weight. 0 = no rows. 1 = baseline.
-    # SEED_DATA_FORMAT.md §3 maps the "heavy/medium/light/-" labels to
-    # these numeric weights.
+    # Generators use these as direct multipliers on per-day Poisson
+    # means.
     weights: dict[str, float] = field(default_factory=dict)
 
 
@@ -108,7 +115,8 @@ TEAM_PROFILES: dict[str, TeamProfile] = {
         "gmail":               0.8,
         "bamboohr":            0.4,
         "jira":                1.3,
-        # No Zendesk connector in the repo — SEED_DATA_FORMAT §3.
+        # No Zendesk connector in the repo — support rows use this
+        # placeholder data_source so the per-team distinction is visible.
         "zendesk-placeholder": 1.5,
         "chatgpt":             0.5,
         "claude_team":         0.6,

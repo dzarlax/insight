@@ -320,17 +320,15 @@ After `seed silver` runs, ClickHouse has:
 2. Every `src/ingestion/scripts/migrations/*.sql` applied to create the
    `insight.*` gold views the analytics-api reads.
 3. ~24k rows across 16 silver tables, profile-typed per team (`class_git_*`
-   only for devs, `class_crm_*` only for sales, etc.) — see
-   [SEED_DATA_FORMAT.md](../SEED_DATA_FORMAT.md) §3.
+   only for devs, `class_crm_*` only for sales, etc.). The full
+   per-team activity table lives in `compose/seed/profiles.py`.
 
 After `seed silver` runs, the analytics-api's schema validator flips
 from "80 metrics error: table_not_found" to "80 ok" and the FE
 dashboards have data to show.
 
-The data contract lives at the workspace root in
-[SEED_DATA_FORMAT.md](../SEED_DATA_FORMAT.md); the script source is in
-`insight/compose/seed/` (its README explains the ruff / mypy / venv
-setup).
+The script source is in `insight/compose/seed/` — its README explains
+the ruff / mypy / venv setup.
 
 ## Common tasks
 

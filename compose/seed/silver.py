@@ -14,7 +14,8 @@ three are idempotent — re-running converges on the same end state.
    order. Migrations are `DROP VIEW IF EXISTS` + `CREATE VIEW`.
 
 3. Generate per-team activity rows via `generators/*.py`. Volumes scale
-   by team profile + persona; ranges follow SEED_DATA_FORMAT §5.
+   by team profile + persona; per-day caps live in each generator
+   module.
 """
 
 from __future__ import annotations

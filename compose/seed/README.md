@@ -2,9 +2,9 @@
 
 Python script that populates the local docker-compose stack with a
 25-person demo organisation (4 teams + CEO) and per-team activity in
-ClickHouse silver tables. See
-[/Users/antonz/Sources/cf/SEED_DATA_FORMAT.md](../../../SEED_DATA_FORMAT.md)
-for the data contract.
+ClickHouse silver tables. `profiles.py` documents the roster and the
+per-team source-type weights; the per-domain generators under
+`generators/` document the row shapes they emit.
 
 ## Run it
 
