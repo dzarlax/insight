@@ -273,7 +273,10 @@ services:
     working_dir: /app
     environment:
       CI: "true"
-      VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:${API_GATEWAY_PORT:-8080}}"
+      # Vite proxies `/api/*` to this target — used by the FE's
+      # analytics + identity API clients. Must resolve from inside the
+      # frontend container, so we use the compose service name.
+      VITE_API_PROXY_TARGET: "${VITE_API_PROXY_TARGET:-http://api-gateway:8080}"
       VITE_OIDC_ISSUER: "${OIDC_ISSUER:-}"
       VITE_OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
       # Dev impersonation: when set AND a matching row exists in

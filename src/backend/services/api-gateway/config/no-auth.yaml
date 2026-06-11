@@ -78,4 +78,6 @@ modules:
     config:
       routes:
         - prefix: "/analytics"
-          upstream: "http://localhost:8081"
+          upstream: "http://analytics-api:8081"
+        - prefix: "/identity"
+          upstream: "http://identity:8082"
