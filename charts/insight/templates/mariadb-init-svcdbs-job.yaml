@@ -61,6 +61,10 @@ spec:
         app.kubernetes.io/name: {{ include "insight.fullname" . }}-mariadb-init
         app.kubernetes.io/component: mariadb-init
     spec:
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace at pod-start
+      # (see apiGateway deployment for the longer explanation).
+      enableServiceLinks: false
       restartPolicy: OnFailure
       containers:
         - name: db-init

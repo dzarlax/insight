@@ -28,6 +28,13 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- end }}
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace at pod-start.
+      # We discover dependencies via DNS (`*.svc.cluster.local`); the env-var
+      # mechanism only adds noise (~100+ vars in this namespace), creates
+      # startup-ordering coupling, and confuses `env` output by colliding
+      # with our own `APP__*` config-prefix scheme.
+      enableServiceLinks: false
       terminationGracePeriodSeconds: 60
       securityContext:
         runAsNonRoot: true
