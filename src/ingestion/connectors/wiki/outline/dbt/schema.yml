@@ -2,8 +2,11 @@ version: 2
 
 sources:
   - name: bronze_outline
-    # Source freshness (TAF #1322): the newest Airbyte row must be recent,
-    # else the sync silently stopped and dashboards go stale with no error.
+    # Source freshness (TAF #1322). INFERRED, NOT live-verified — bronze_outline
+    # has no rows in any reachable install. Edit activity is event-style (quiet
+    # periods are normal), so the content table anchors on `updated_at`
+    # (cursor-confirmed) with the event tier (96h/168h); the rest stay on the
+    # sync-liveness default. Confirm once ingested.
     freshness:
       warn_after: {count: 36, period: hour}
       error_after: {count: 72, period: hour}
@@ -11,7 +14,11 @@ sources:
     schema: bronze_outline
     tables:
       - name: wiki_spaces
-      - name: wiki_pages
+      - name: wiki_pages   # inferred windowed/event (updated_at)
+        loaded_at_field: parseDateTimeBestEffortOrNull(updated_at)
+        freshness:
+          warn_after: {count: 96, period: hour}
+          error_after: {count: 168, period: hour}
       - name: wiki_page_versions
       - name: wiki_comments
       - name: wiki_users
